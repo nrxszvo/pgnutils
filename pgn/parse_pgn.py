@@ -1,6 +1,9 @@
 import argparse
 import re
 import numpy as np
+import os
+import time
+import datetime
 
 
 def sign(v):
@@ -76,8 +79,19 @@ FILE_TO_INT = {
 }
 
 
-def SQR_TO_INT(sqr):
-    return FILE_TO_INT[sqr[0]] + 8 * (int(sqr[1]) - 1)
+def rank_to_int(r):
+    return int(r) - 1
+
+
+def sqr_to_int(sqr):
+    return FILE_TO_INT[sqr[0]] + 8 * rank_to_int(sqr[1])
+
+
+def parse_rank_or_file(rorf, ret):
+    if rorf >= "a" and rorf <= "h":
+        ret["src_file"] = rorf
+    else:
+        ret["src_rank"] = rorf
 
 
 def parse_move(mv, last_mv, color):
@@ -99,7 +113,7 @@ def parse_move(mv, last_mv, color):
             ret["dest"] = mv
         else:
             if mv[1] == "x":
-                ret["src_file"] = mv[0]
+                parse_rank_or_file(mv[0], ret)
                 ret["dest"] = mv[2:4]
                 if (
                     len(last_mv) == 2
@@ -126,17 +140,18 @@ def parse_move(mv, last_mv, color):
             ret["dest"] = mv[1:]
         elif len(mv) == 4:
             if mv[1] != "x":
-                ret["src_file"] = mv[1]
+                parse_rank_or_file(mv[1], ret)
             ret["dest"] = mv[2:]
         elif len(mv) == 5:
             if mv[2] == "x":
-                ret["src_file"] = mv[1]
+                parse_rank_or_file(mv[1], ret)
                 ret["dest"] = mv[3:5]
             else:
                 ret["src"] = mv[1:3]
                 ret["dest"] = mv[3:5]
         else:
-            assert len(mv) == 6, f"unexpected mv length: {mv}"
+            if len(mv) != 6:
+                raise Exception(f"unexpected mv length: {mv}")
             ret["src"] = mv[1:3]
             ret["dest"] = mv[4:6]
 
@@ -153,13 +168,13 @@ def parse_castle(mvdata, board, state):
             board[0][6] = state[4]
             board[0][7] = None
             board[0][5] = state[7]
-            return [4 * 64 + 6, 7 * 64 + 5]
+            return QBISHOP * 64 + 7
         else:
             board[7][4] = None
             board[7][6] = state[4]
             board[7][7] = None
             board[7][5] = state[7]
-            return [4 * 64 + 63, 7 * 64 + 62]
+            return QBISHOP * 64 + 63
     else:
         state[4].file = 2
         state[0].file = 3
@@ -168,13 +183,13 @@ def parse_castle(mvdata, board, state):
             board[0][2] = state[4]
             board[0][0] = None
             board[0][3] = state[0]
-            return [4 * 64 + 2, 3]
+            return KBISHOP * 64
         else:
             board[7][4] = None
             board[7][2] = state[4]
             board[7][0] = None
             board[7][3] = state[0]
-            return [4 * 64 + 58, 59]
+            return KBISHOP * 64 + 56
 
 
 def legal_pawn_move(piece, board, dr, df, enpassant):
@@ -183,9 +198,9 @@ def legal_pawn_move(piece, board, dr, df, enpassant):
         if abs(dr - sr) > 2:
             return False
         if abs(dr - sr) == 2:
-            if piece.color == 1 and dr != 3:
+            if piece.color == 1 and (sr != 1 or dr != 3):
                 return False
-            if piece.color == -1 and dr != 4:
+            if piece.color == -1 and (sr != 6 or dr != 4):
                 return False
             if board[dr - piece.color][df] is not None:
                 return False
@@ -259,7 +274,7 @@ def legal_queen_move(piece, board, dr, df):
 
 
 def legal_move(piece, board, dest, enpassant=False):
-    dr = int(dest[1]) - 1
+    dr = rank_to_int(dest[1])
     df = FILE_TO_INT[dest[0]]
 
     if piece.name == "P":
@@ -321,21 +336,33 @@ def infer_piece(mvdata, board, state, opp_state):
             sr, sf = mv_to_pos(mvdata["src"])
             if piece.rank == sr and piece.file == sf:
                 if "promotion" in mvdata:
-                    piece.name = mvdata["piece"]
-                candidates.append(i)
+                    if piece.name == "P":
+                        piece.name = mvdata["piece"]
+                        candidates.append(i)
+                else:
+                    candidates.append(i)
 
-        elif "src_file" in mvdata:
+        elif "src_file" in mvdata or "src_rank" in mvdata:
+            if "src_file" in mvdata:
+                src_cond = FILE_TO_INT[mvdata["src_file"]] == piece.file
+            else:
+                src_cond = rank_to_int(mvdata["src_rank"]) == piece.rank
+
             if (
                 board[piece.rank][piece.file] == piece
                 and (
                     piece.name == mvdata["piece"]
                     or ("promotion" in mvdata and piece.name == "P")
                 )
-                and FILE_TO_INT[mvdata["src_file"]] == piece.file
+                and src_cond
                 and legal_move(piece, board, mvdata["dest"], "enpassant" in mvdata)
             ):
-                piece.name = mvdata["piece"]
-                candidates.append(i)
+                if "promotion" in mvdata:
+                    if piece.name == "P":
+                        piece.name = mvdata["piece"]
+                        candidates.append(i)
+                else:
+                    candidates.append(i)
 
         else:
             if (
@@ -384,26 +411,46 @@ def infer_piece(mvdata, board, state, opp_state):
 
     idx = valid[0]
     update_state(idx, ep)
-    mvid = idx * 64 + SQR_TO_INT(mvdata["dest"])
-    return [mvid]
+    mvid = idx * 64 + sqr_to_int(mvdata["dest"])
+    return mvid
+
+
+MV_PAT = "O-O-O|O-O|[a-hRNBQK]+[0-9=x]*[a-hRNBQK]*[0-9]*[=RNBQ]*"
 
 
 def parse_moves(move_str):
+    def moveno_str(moveno):
+        return f"{moveno}. "
+
     board, white, black = board_state()
-    moves = move_str.split(" ")
-    moves = moves[:-1]
+
+    move_str = move_str[:-5]
     out = []
     bm = None
-    for i in range(0, len(moves), 3):
-        wm = moves[i + 1]
+    curmv = 1
+    idx = 0
+
+    while idx < len(move_str) - 3:
+        mvstart = idx
+        nextmv = moveno_str(curmv + 1)
+        while idx < len(move_str) and move_str[idx : idx + len(nextmv)] != nextmv:
+            idx += 1
+        m = re.match(f"{curmv}\..* ({MV_PAT}).* ({MV_PAT})", move_str[mvstart:idx])
+        if m is None:
+            m = re.match(f"{curmv}\..* ({MV_PAT})", move_str[mvstart:idx])
+        wm = m.group(1)
         mvdata = parse_move(wm, bm, 1)
-        mvids = infer_piece(mvdata, board, white, black)
-        out.extend(mvids)
-        if len(moves) > i + 2:
-            bm = moves[i + 2]
+        mvid = infer_piece(mvdata, board, white, black)
+        out.append(mvid)
+
+        if len(m.groups()) == 2:
+            bm = m.group(2)
             mvdata = parse_move(bm, wm, -1)
-            mvids = infer_piece(mvdata, board, black, white)
-            out.extend(mvids)
+            mvid = infer_piece(mvdata, board, black, white)
+            out.append(mvid)
+
+        curmv += 1
+
     return out
 
 
@@ -414,36 +461,89 @@ def main():
 
     args = parser.parse_args()
 
-    with open(args.pgn) as fin:
-        data = fin.readlines()
-
-    WELO = 7
-    BELO = 8
-    TC = 13
-    TERM = 14
-    MVS = 16
-    BS = 18
-
     npdata = []
 
-    for i in range(0, len(data), BS):
-        if data[i + TERM] != '[Termination "Normal"]\n':
-            continue
-        if data[i + TC] != '[TimeControl "600+0"]\n':
-            continue
+    game = 0
 
-        we = re.match('\[WhiteElo "([0-9]+)"\]', data[i + WELO]).group(1)
-        be = re.match('\[BlackElo "([0-9]+)"\]', data[i + BELO]).group(1)
+    # for debugging
+    lineno = 0
+    gamestart = 0
 
-        npdata.append(
-            {
-                "WhiteElo": int(we),
-                "BlackElo": int(be),
-                "Moves": parse_moves(data[i + MVS]),
-            }
-        )
+    nbytes = os.path.getsize(args.pgn)
+    bytes_processed = 0
 
-    print(npdata)
+    fin = open(args.pgn, "r")
+    start = time.time()
+    eta = "tbd"
+    while True:
+        move_str = None
+        welo = None
+        belo = None
+        validTime = False
+        validTerm = False
+
+        # for debugging
+        data = []
+
+        for line in fin:
+            bytes_processed += len(line)
+            data.append(line)
+            lineno += 1
+            if line[0] == "[":
+                if line[:9] == "[WhiteElo":
+                    welo = line
+                elif line[:9] == "[BlackElo":
+                    belo = line
+                elif line[:12] == "[TimeControl":
+                    if line == '[TimeControl "600+0"]\n':
+                        validTime = True
+                elif line[:12] == "[Termination":
+                    m = re.match('\[Termination "(.+)"\]\n', line)
+                    if m.group(1) in ["Normal", "Time forfeit"]:
+                        validTerm = True
+            elif line[0] == "1":
+                gamestart = lineno + 1
+                if validTime and validTerm:
+                    mw = re.match('\[WhiteElo "([0-9]+)"\]', welo)
+                    mb = re.match('\[BlackElo "([0-9]+)"\]', belo)
+                    if mw and mb:
+                        we = mw.group(1)
+                        be = mb.group(1)
+                        move_str = line
+                        break
+
+                validTime = False
+                validTerm = False
+                data = []
+        else:
+            break  # EOF
+
+        if move_str:
+            npdata.append(
+                {
+                    "WhiteElo": int(we),
+                    "BlackElo": int(be),
+                    "Moves": parse_moves(move_str),
+                }
+            )
+
+            game += 1
+            if game % 100 == 0:
+                end = time.time()
+                eta = datetime.timedelta(
+                    seconds=(nbytes - bytes_processed) * (end - start) / bytes_processed
+                )
+                hours = eta.seconds // 3600
+                minutes = (eta.seconds % 3600) // 60
+                seconds = eta.seconds % 60
+                eta_str = f"{eta.days}:{hours}:{minutes:02}:{seconds:02}"
+                print(
+                    f"processed {game} games (eta: {eta_str})",
+                    end="\r",
+                )
+
+    fin.close()
+    print(f"Number of games: {len(npdata)}")
     np.save(args.out, npdata, allow_pickle=True)
 
 
