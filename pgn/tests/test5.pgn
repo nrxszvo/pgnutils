@@ -1,0 +1,19 @@
+[Event "Rated Classical game"]
+[Site "https://lichess.org/wjm1ek2e"]
+[White "serg56"]
+[Black "Paul1966"]
+[Result "1-0"]
+[UTCDate "2013.01.02"]
+[UTCTime "09:09:16"]
+[WhiteElo "1768"]
+[BlackElo "1834"]
+[WhiteRatingDiff "+15"]
+[BlackRatingDiff "-16"]
+[ECO "C00"]
+[Opening "French Defense: La Bourdonnais Variation"]
+[TimeControl "600+0"]
+[Termination "Normal"]
+
+1. e4 e6 2. f4 d5 3. e5 c5 4. d4 Nc6 5. Be3 Qb6 6. Bc1 cxd4 7. Bd3 Bb4+ 8. Nd2 Nge7 9. Ne2 Nf5 10. Bxf5 exf5 11. a3 Bc5 12. Nb3 O-O 13. Nxc5 Qxc5 14. Qd3 Be6 15. Ng3 Rac8 16. b4 Qe7 17. b5 Na5 18. Bd2 Nc4 19. Bb4 Qc7 20. Bxf8 Ne3 21. Bd6 Qxc2 22. Qxc2 Nxc2+ 23. Kd2 Nxa1 24. Rxa1 Rc3 25. Bb4 Re3 26. Nf1 Rb3 27. Kc2 d3+ 28. Kxb3 d4+ 29. Kb2 Bc4 30. Nd2 Bxb5 31. Rc1 Bc6 32. g3 f6 33. exf6 gxf6 34. Bc5 a6 35. Bxd4 Kg7 36. Rc5 Kg6 37. Kc3 Be4 38. Nxe4 fxe4 39. Be3 h5 40. Kd4 f5 41. a4 h4 42. a5 hxg3 43. hxg3 Kh5 44. Rc7 Kg4 45. Rxb7 Kxg3 46. Rb6 Kf3 47. Rxa6 Ke2 48. Rf6 d2 49. Bxd2 Kxd2 50. Rxf5 e3 51. Re5 e2 52. Rxe2+ 1-0
+
+

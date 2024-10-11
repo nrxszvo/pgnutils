@@ -1,0 +1,19 @@
+[Event "Rated Classical game"]
+[Site "https://lichess.org/glvzhx0f"]
+[White "mazorra"]
+[Black "Kimon"]
+[Result "0-1"]
+[UTCDate "2013.01.14"]
+[UTCTime "15:33:33"]
+[WhiteElo "1584"]
+[BlackElo "1523"]
+[WhiteRatingDiff "-12"]
+[BlackRatingDiff "+13"]
+[ECO "C20"]
+[Opening "Bishop's Opening: Boi Variation"]
+[TimeControl "600+0"]
+[Termination "Normal"]
+
+1. e4 e5 2. Bc4 Bc5 3. d3 d6 4. Bb3 h6 5. Nc3 a6 6. Qf3 Qf6 7. Qg3 Nc6 8. Nd5 Qd8 9. Qxg7 Qh4 10. Nxc7+ Kd7 11. Qxf7+ Nge7 12. Qe6+ Kxc7 13. Qf7 Bd7 14. g3 Qg4 15. Ne2 Rhf8 16. Be6 Rxf7 17. Bxg4 Bxg4 18. Rf1 Raf8 19. f4 Bh3 20. Rf3 Bg2 21. Rf2 Bxf2+ 22. Kxf2 Bh3 23. Bd2 Bg4 24. Ng1 exf4 25. gxf4 Nd4 26. Kg3 h5 27. Ba5+ b6 28. Bc3 Ne6 29. a3 Rxf4 30. Bd2 Rf4f7 31. h3 Bf3 32. Rf1 Rg7+ 33. Kh4 Bg2 34. Rxf8 Nxf8 35. Kxh5 Rh7+ 36. Kg5 Bxh3 37. Kf6 Kd7 38. Bg5 Be6 39. Nf3 Rf7# 0-1
+
+

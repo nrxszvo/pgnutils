@@ -1,0 +1,19 @@
+[Event "Rated Classical game"]
+[Site "https://lichess.org/7e0rgkgz"]
+[White "Deecutta"]
+[Black "jagamca"]
+[Result "0-1"]
+[UTCDate "2013.01.04"]
+[UTCTime "05:53:01"]
+[WhiteElo "1500"]
+[BlackElo "1485"]
+[WhiteRatingDiff "-183"]
+[BlackRatingDiff "+8"]
+[ECO "D02"]
+[Opening "Queen's Pawn Game: Chigorin Variation"]
+[TimeControl "600+0"]
+[Termination "Normal"]
+
+1. d4 d5 2. Nf3 Nc6 3. a3 Bg4 4. e3 e6 5. h3 Bh5 6. Be2 Qf6 7. c4 dxc4 8. Nc3 a5 9. Qa4 Bxf3 10. Bxf3 Ne7 11. Qxc4 g6 12. Bd2 Bg7 13. O-O O-O 14. Rfc1 e5 15. Ne4 Qe6 16. Qxe6 fxe6 17. Ng5 Rf6 18. Rc2 exd4 19. exd4 Nxd4 20. Rxc7 Nd5 21. Bxd5 exd5 22. Rxb7 h6 23. Nf3 Nxf3+ 24. gxf3 Rxf3 25. Bc3 Bxc3 26. bxc3 Raf8 27. Rf1 Rxc3 28. Rfb1 Rxa3 29. Rb8 Rxb8 30. Rxb8+ Kf7 31. Rb5 Rxh3 32. Rxa5 Rh5 33. Kg2 Ke6 34. Ra6+ Kf5 35. Ra5 Ke4 36. Kf1 d4 37. Rxh5 gxh5 38. Ke2 h4 0-1
+
+
