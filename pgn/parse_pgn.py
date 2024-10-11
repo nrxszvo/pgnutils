@@ -1,5 +1,6 @@
 import argparse
 import re
+import numpy as np
 
 
 def sign(v):
@@ -14,6 +15,9 @@ class Piece:
         self.pid = pid
         self.color = color
         self.captured = False
+
+    def pos(self):
+        return (self.rank, self.file)
 
 
 QROOK = 0
@@ -96,13 +100,16 @@ def parse_move(mv, last_mv, color):
         else:
             if mv[1] == "x":
                 ret["src_file"] = mv[0]
-                ret["dest"] = mv[2:]
+                ret["dest"] = mv[2:4]
                 if (
                     len(last_mv) == 2
                     and last_mv[0] == mv[2]
                     and int(last_mv[1]) + color == int(mv[3])
                 ):
                     ret["enpassant"] = True
+                if len(mv) > 4 and mv[4] == "=":
+                    ret["promotion"] = True
+                    ret["piece"] = mv[5]
             elif mv[2] == "=":
                 ret["dest"] = mv[:2]
                 ret["src"] = mv[0] + str(int(mv[1]) - color)
@@ -171,8 +178,7 @@ def parse_castle(mvdata, board, state):
 
 
 def legal_pawn_move(piece, board, dr, df, enpassant):
-    sr = piece.rank
-    sf = piece.file
+    sr, sf = piece.pos()
     if sf == df:
         if abs(dr - sr) > 2:
             return False
@@ -198,8 +204,7 @@ def legal_pawn_move(piece, board, dr, df, enpassant):
 
 
 def legal_rook_move(piece, board, dr, df):
-    sr = piece.rank
-    sf = piece.file
+    sr, sf = piece.pos()
     if sf != df and sr != dr:
         return False
 
@@ -216,8 +221,7 @@ def legal_rook_move(piece, board, dr, df):
 
 
 def legal_knight_move(piece, board, dr, df):
-    sr = piece.rank
-    sf = piece.file
+    sr, sf = piece.pos()
 
     if abs(sf - df) == 2:
         if abs(sr - dr) != 1:
@@ -232,8 +236,7 @@ def legal_knight_move(piece, board, dr, df):
 
 
 def legal_bishop_move(piece, board, dr, df):
-    sr = piece.rank
-    sf = piece.file
+    sr, sf = piece.pos()
 
     if abs(sf - df) != abs(sr - dr):
         return False
@@ -274,12 +277,9 @@ def legal_move(piece, board, dest, enpassant=False):
 
 
 def attacking(a, b, board):
-    dr = b.rank
-    df = b.file
-
+    dr, df = b.pos()
     if a.name == "P":
-        sr = a.rank
-        sf = a.file
+        sr, sf = a.pos()
         return a.color * (dr - sr) == 1 and abs(df - sf) == 1
     elif a.name == "R":
         return legal_rook_move(a, board, dr, df)
@@ -300,71 +300,90 @@ def king_in_check(board, cur, opp):
     return False
 
 
+def mv_to_pos(mv):
+    r = int(mv[1]) - 1
+    f = FILE_TO_INT[mv[0]]
+    return (r, f)
+
+
 def infer_piece(mvdata, board, state, opp_state):
     if "castle" in mvdata:
         return parse_castle(mvdata, board, state)
 
     candidates = []
-    if "src" in mvdata:
-        for i in range(len(state)):
-            piece = state[i]
-            sr = int(mvdata["src"][1]) - 1
-            sf = FILE_TO_INT[mvdata["src"][0]]
+
+    for i in range(len(state)):
+        piece = state[i]
+        if piece.captured:
+            continue
+
+        if "src" in mvdata:
+            sr, sf = mv_to_pos(mvdata["src"])
             if piece.rank == sr and piece.file == sf:
                 if "promotion" in mvdata:
                     piece.name = mvdata["piece"]
                 candidates.append(i)
 
-    elif "src_file" in mvdata:
-        for i in range(len(state)):
-            piece = state[i]
+        elif "src_file" in mvdata:
             if (
                 board[piece.rank][piece.file] == piece
-                and piece.name == mvdata["piece"]
+                and (
+                    piece.name == mvdata["piece"]
+                    or ("promotion" in mvdata and piece.name == "P")
+                )
                 and FILE_TO_INT[mvdata["src_file"]] == piece.file
                 and legal_move(piece, board, mvdata["dest"], "enpassant" in mvdata)
             ):
+                piece.name = mvdata["piece"]
                 candidates.append(i)
 
-    else:
-        for i in range(len(state)):
-            piece = state[i]
+        else:
             if (
                 board[piece.rank][piece.file] == piece and piece.name == mvdata["piece"]
             ) and legal_move(piece, board, mvdata["dest"]):
                 candidates.append(i)
 
-    dr = int(mvdata["dest"][1]) - 1
-    df = FILE_TO_INT[mvdata["dest"][0]]
+    dr, df = mv_to_pos(mvdata["dest"])
 
-    valid = []
-    for idx in candidates:
-        sr = state[idx].rank
-        sf = state[idx].file
+    def update_state(idx, enpassant):
+        sr, sf = state[idx].pos()
         state[idx].rank = dr
         state[idx].file = df
         board[sr][sf] = None
-        temp = board[dr][df]
+        if enpassant:
+            tr = dr - state[idx].color
+            temp = board[tr][df]
+            board[tr][df] = None
+        else:
+            temp = board[dr][df]
         if temp:
             temp.captured = True
         board[dr][df] = state[idx]
-        if king_in_check(board, state, opp_state):
-            board[sr][sf] = state[idx]
-            if temp:
-                temp.captured = False
-            board[dr][df] = temp
-            state[idx].rank = sr
-            state[idx].file = sf
-        else:
+        return sr, sf, temp
+
+    def revert_state(idx, sr, sf, temp, enpassant):
+        board[sr][sf] = state[idx]
+        if temp:
+            temp.captured = False
+            board[temp.rank][temp.file] = temp
+        if temp is None or enpassant:
+            board[dr][df] = None
+        state[idx].rank = sr
+        state[idx].file = sf
+
+    valid = []
+    ep = "enpassant" in mvdata
+    for idx in candidates:
+        sr, sf, temp = update_state(idx, ep)
+        if not king_in_check(board, state, opp_state):
             valid.append(idx)
+        revert_state(idx, sr, sf, temp, ep)
 
     if len(valid) != 1:
-        raise Exception("could not resolve multiple possible moves")
+        raise Exception("could not resolve possible moves")
 
     idx = valid[0]
-    state[idx].rank = dr
-    state[idx].file = df
-
+    update_state(idx, ep)
     mvid = idx * 64 + SQR_TO_INT(mvdata["dest"])
     return [mvid]
 
@@ -378,8 +397,8 @@ def parse_moves(move_str):
     for i in range(0, len(moves), 3):
         wm = moves[i + 1]
         mvdata = parse_move(wm, bm, 1)
-        mvid = infer_piece(mvdata, board, white, black)
-        out.append(mvid)
+        mvids = infer_piece(mvdata, board, white, black)
+        out.extend(mvids)
         if len(moves) > i + 2:
             bm = moves[i + 2]
             mvdata = parse_move(bm, wm, -1)
@@ -391,7 +410,7 @@ def parse_moves(move_str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pgn", help="pgn filename", required=True)
-    parser.add_argument("--csv", help="csv output filename", required=True)
+    parser.add_argument("--out", help="npy output filename", required=True)
 
     args = parser.parse_args()
 
@@ -423,6 +442,9 @@ def main():
                 "Moves": parse_moves(data[i + MVS]),
             }
         )
+
+    print(npdata)
+    np.save(args.out, npdata, allow_pickle=True)
 
 
 if __name__ == "__main__":
