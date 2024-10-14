@@ -6,9 +6,10 @@ def main():
     parser.add_argument("--pgn", help="pgn filename", required=True)
     parser.add_argument("--line", help="starting line of game", type=int, required=True)
     parser.add_argument("--out", help="pgn output filename", required=True)
-
+    parser.add_argument("--n", help="number of consecutive games", default=1, type=int)
     args = parser.parse_args()
 
+    n = 0
     with open(args.pgn, "r") as fin:
         lineno = 0
         for line in fin:
@@ -19,7 +20,9 @@ def main():
         for line in fin:
             data.append(line)
             if line[0] == "1":
-                break
+                n += 1
+                if n == args.n:
+                    break
 
     with open(args.out, "w") as fout:
         fout.writelines(data)

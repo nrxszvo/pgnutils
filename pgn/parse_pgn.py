@@ -168,8 +168,8 @@ QCASTLEB = (16 + KBISHOP) * 64 + 56
 
 def castle_to_mvid(mvdata, board, state):
     if mvdata["castle"] == "king":
-        state[4].file = 6
-        state[7].file = 5
+        state[KING].file = 6
+        state[KROOK].file = 5
 
         if state[0].color == COLORW:
             board[0][4] = None
@@ -184,8 +184,8 @@ def castle_to_mvid(mvdata, board, state):
             board[7][5] = state[KROOK]
             return KCASTLEB
     else:
-        state[4].file = 2
-        state[0].file = 3
+        state[KING].file = 2
+        state[QROOK].file = 3
         if state[0].color == COLORW:
             board[0][4] = None
             board[0][2] = state[KING]
@@ -427,18 +427,23 @@ def infer_mvid(mvdata, board, state, opp_state):
         piece.rank = sr
         piece.file = sf
 
-    valid = []
     ep = "enpassant" in mvdata
-    for piece in candidates:
-        sr, sf, temp = update_state(piece, ep)
-        if not king_in_check(board, state, opp_state):
-            valid.append(piece)
-        revert_state(piece, sr, sf, temp, ep)
+    if len(candidates) > 1:
+        valid = []
+        for piece in candidates:
+            sr, sf, temp = update_state(piece, ep)
+            if not king_in_check(board, state, opp_state):
+                valid.append(piece)
+            revert_state(piece, sr, sf, temp, ep)
 
-    if len(valid) != 1:
-        raise Exception("could not resolve possible moves")
+        if len(valid) != 1:
+            raise Exception("could not resolve possible moves")
 
-    piece = valid[0]
+        piece = valid[0]
+
+    else:
+        piece = candidates[0]
+
     update_state(piece, ep)
     mvid = piece.pid * 64 + sqr_to_int(mvdata["dest"])
     return mvid
@@ -493,19 +498,20 @@ COMPLETE = 1
 INVALID = 2
 
 
-def init_state():
-    return {
-        "welo": None,
-        "belo": None,
-        "valid_time": False,
-        "valid_term": False,
-        "move_str": None,
-    }
+def init_state(state={}):
+    state["welo"] = None
+    state["belo"] = None
+    state["valid_time"] = False
+    state["valid_term"] = False
+    state["move_str"] = None
+    return state
 
 
 def process_raw_line(line, state):
     if line[0] == "[":
-        if line[:9] == "[WhiteElo":
+        if line[:6] == "[Event":
+            init_state(state)
+        elif line[:9] == "[WhiteElo":
             state["welo"] = line
         elif line[:9] == "[BlackElo":
             state["belo"] = line
@@ -521,8 +527,8 @@ def process_raw_line(line, state):
             mw = re.match('\[WhiteElo "([0-9]+)"\]', state["welo"])
             mb = re.match('\[BlackElo "([0-9]+)"\]', state["belo"])
             if mw and mb:
-                state["we"] = int(mw.group(1))
-                state["be"] = int(mb.group(1))
+                state["welo"] = int(mw.group(1))
+                state["belo"] = int(mb.group(1))
                 state["move_str"] = line
                 return COMPLETE
         return INVALID
@@ -544,12 +550,43 @@ def print_status(nbytes, bytes_processed, start, game):
     )
 
 
+def get_game_starts(pgn):
+    game_starts = [0]
+    lineno = 1
+    game = 0
+    nbytes = os.path.getsize(pgn)
+    bytes_processed = 0
+    fin = open(pgn, "r")
+    start = time.time()
+    while True:
+        state = init_state()
+        for line in fin:
+            bytes_processed += len(line)
+            lineno += 1
+            code = process_raw_line(line, state)
+            if code in [COMPLETE, INVALID]:
+                if code == COMPLETE:
+                    game_starts.append(lineno + 1)
+                    game += 1
+                    if game % 100 == 0:
+                        print_status(nbytes, bytes_processed, start, game)
+
+                break
+        else:
+            break  # EOF
+    fin.close()
+
+    return game_starts
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pgn", help="pgn filename", required=True)
     parser.add_argument("--npy", help="npy output name", required=True)
 
     args = parser.parse_args()
+
+    # game_starts = get_game_starts(args.pgn)
 
     # for debugging
     lineno = 0
@@ -574,7 +611,6 @@ def main():
             lineno += 1
             code = process_raw_line(line, state)
             if code in [COMPLETE, INVALID]:
-                gamestart = lineno + 1
                 if code == COMPLETE:
                     break
                 else:
@@ -588,8 +624,8 @@ def main():
                 mvids = parse_moves(state["move_str"])
                 md["games"].append(
                     {
-                        "WhiteElo": state["we"],
-                        "BlackElo": state["be"],
+                        "WhiteElo": state["welo"],
+                        "BlackElo": state["belo"],
                         "start": nmoves,
                         "length": len(mvids),
                     }
@@ -604,14 +640,17 @@ def main():
                 print(e)
                 print(f"game start: {gamestart}")
 
+            gamestart = lineno + 1
+
     fin.close()
     print(f"\nNumber of games: {game}")
-    mdfile = f"{args.npy}_md.npy"
-    mvfile = f"{args.npy}_moves.npy"
-    md["shape"] = len(all_moves)
-    np.save(mdfile, md, allow_pickle=True)
-    output = np.memmap(mvfile, dtype="int32", mode="w+", shape=md["shape"])
-    output[:] = all_moves[:]
+    if game > 0:
+        mdfile = f"{args.npy}_md.npy"
+        mvfile = f"{args.npy}_moves.npy"
+        md["shape"] = len(all_moves)
+        np.save(mdfile, md, allow_pickle=True)
+        output = np.memmap(mvfile, dtype="int32", mode="w+", shape=md["shape"])
+        output[:] = all_moves[:]
 
 
 if __name__ == "__main__":

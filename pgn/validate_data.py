@@ -118,19 +118,23 @@ def main():
             id_idx = 0
             print(f"evaluating game {game}", end="\r")
             while mv_idx < len(move_str):
-                mv_idx, m = parse_pgn.match_next_move(move_str, mv_idx, curmv)
-                for mv in m.groups():
-                    mvid = mvids[id_idx]
-                    id_idx += 1
-                    pfr = decode_mvid(mvid)
-                    if not compare_moves(mv, pfr):
-                        print(
-                            f"Move mismatch: game {game} ({gamestart}), move {curmv}, {mv} != {pfr}"
-                        )
-                        return
-                curmv += 1
+                try:
+                    mv_idx, m = parse_pgn.match_next_move(move_str, mv_idx, curmv)
+                    for mv in m.groups():
+                        mvid = mvids[id_idx]
+                        id_idx += 1
+                        pfr = decode_mvid(mvid)
+                        if not compare_moves(mv, pfr):
+                            print(
+                                f"Move mismatch: game {game} ({gamestart}), move {curmv}, {mv} != {pfr}"
+                            )
+                            return
+                    curmv += 1
+                except Exception as e:
+                    print(e)
+                    print(f"game {game} ({gamestart}), move {curmv}")
 
-        gamestart = lineno + 1
+            gamestart = lineno + 1
     print("\nvalidation PASSED")
 
 
