@@ -4,6 +4,7 @@ import numpy as np
 import os
 import time
 import datetime
+from multiprocessing import Process, Queue
 
 
 def sign(v):
@@ -535,71 +536,238 @@ def process_raw_line(line, state):
     return INCOMPLETE
 
 
-def print_status(nbytes, bytes_processed, start, game):
+def get_eta(max_items, items_so_far, start):
     end = time.time()
     eta = datetime.timedelta(
-        seconds=(nbytes - bytes_processed) * (end - start) / bytes_processed
+        seconds=(max_items - items_so_far) * (end - start) / items_so_far
     )
     hours = eta.seconds // 3600
     minutes = (eta.seconds % 3600) // 60
     seconds = eta.seconds % 60
     eta_str = f"{eta.days}:{hours}:{minutes:02}:{seconds:02}"
-    print(
-        f"processed {game} games (eta: {eta_str})",
-        end="\r",
-    )
+    return eta_str
 
 
-def get_game_starts(pgn):
-    game_starts = [0]
-    lineno = 1
-    game = 0
+def load_games(pgn, games_q, num_readers, output_q):
     nbytes = os.path.getsize(pgn)
     bytes_processed = 0
+    games = []
+
     fin = open(pgn, "r")
     start = time.time()
+
     while True:
         state = init_state()
         for line in fin:
             bytes_processed += len(line)
-            lineno += 1
             code = process_raw_line(line, state)
             if code in [COMPLETE, INVALID]:
                 if code == COMPLETE:
-                    game_starts.append(lineno + 1)
-                    game += 1
-                    if game % 100 == 0:
-                        print_status(nbytes, bytes_processed, start, game)
-
-                break
+                    break
+                else:
+                    state = init_state()
         else:
             break  # EOF
-    fin.close()
 
-    return game_starts
+        if code == COMPLETE:
+            idx = len(games)
+            games_q.put((idx, state["move_str"]))
+            games.append(
+                {
+                    "WhiteElo": state["welo"],
+                    "BlackElo": state["belo"],
+                }
+            )
+            if idx % 1000 == 0:
+                eta_str = get_eta(nbytes, bytes_processed, start, idx)
+                print(
+                    f"parsed {idx} games (eta: {eta_str}) (output q size: {output_q.qsize()})",
+                    end="\r",
+                )
+
+    for _ in range(num_readers):
+        games_q.put(("DONE", None))
+
+    return games
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--pgn", help="pgn filename", required=True)
-    parser.add_argument("--npy", help="npy output name", required=True)
+PIECE_TO_NAME = [
+    "R",
+    "N",
+    "B",
+    "Q",
+    "K",
+    "B",
+    "N",
+    "R",
+    "P",
+    "P",
+    "P",
+    "P",
+    "P",
+    "P",
+    "P",
+    "P",
+    "R",
+    "N",
+    "B",
+    "Q",
+    "K",
+    "B",
+    "N",
+    "R",
+    "P",
+    "P",
+    "P",
+    "P",
+    "P",
+    "P",
+    "P",
+    "P",
+]
 
-    args = parser.parse_args()
+INT_TO_FILE = ["a", "b", "c", "d", "e", "f", "g", "h"]
 
-    # game_starts = get_game_starts(args.pgn)
 
+def int_to_row(r):
+    return f"{r+1}"
+
+
+def decode_mvid(mvid):
+    if mvid in [QCASTLEW, QCASTLEB]:
+        return "O-O-O"
+    elif mvid in [KCASTLEW, KCASTLEB]:
+        return "O-O"
+    else:
+        piece = PIECE_TO_NAME[mvid // 64]
+        sqr = mvid % 64
+        r = sqr // 8
+        f = sqr % 8
+        mv = f"{INT_TO_FILE[f]}{int_to_row(r)}"
+        return f"{piece}{mv}"
+
+
+def compare_moves(mv, pfr):
+    if mv == pfr:
+        return True
+    try:
+        piece, file, rank = pfr
+    except Exception as e:
+        print(e)
+        return False
+
+    if piece == "P":
+        return f"{file}{rank}" in mv
+    else:
+        return piece in mv and file in mv and rank in mv
+
+
+def evaluate_game(gameid, move_str, mvids):
+    move_str = move_str[:-5]
+    curmv = 1
+    mv_idx = 0
+    id_idx = 0
+    results = []
+    while mv_idx < len(move_str):
+        try:
+            mv_idx, m = match_next_move(move_str, mv_idx, curmv)
+            for mv in m.groups():
+                mvid = mvids[id_idx]
+                id_idx += 1
+                pfr = decode_mvid(mvid)
+                if not compare_moves(mv, pfr):
+                    err = f"Move mismatch: game {gameid}, move {curmv}, {mv} != {pfr}"
+                    results.append((gameid, err))
+            curmv += 1
+        except Exception as e:
+            print(e)
+            print(f"game {gameid}, move {curmv}")
+    return results
+
+
+def process_games(games_q, output_q):
+    while True:
+        gameid, move_str = games_q.get()
+        if gameid == "DONE":
+            output_q.put(("DONE", None))
+            break
+        mvids = parse_moves(move_str)
+        errs = evaluate_game(gameid, move_str, mvids)
+        if len(errs) == 0:
+            output_q.put((gameid, mvids))
+        else:
+            for gameid, err in errs:
+                print(err)
+
+
+def start_reader_procs(num_readers, proc, args):
+    procs = []
+    for _ in range(num_readers):
+        reader_p = Process(target=proc, args=args)
+        reader_p.daemon = True
+        reader_p.start()
+        procs.append(reader_p)
+    return procs
+
+
+def main_parallel(pgn, n_proc):
+    games_q = Queue()
+    output_q = Queue()
+    start_reader_procs(n_proc, process_games, (games_q, output_q))
+    start = time.time()
+    games_md = load_games(pgn, games_q, n_proc, output_q)
+    end = time.time()
+    print(
+        f"\nTotal time to segment input into individual games: {(end-start)/60:.2f} minutes"
+    )
+
+    mvids_d = {}
+    n_finished = 0
+    print("Finishing move ID processing...")
+    start = time.time()
+    while True:
+        idx, mvids = output_q.get()
+        if idx == "DONE":
+            n_finished += 1
+            if n_finished == n_proc:
+                break
+        else:
+            mvids_d[idx] = mvids
+    end = time.time()
+    print(f"Total time to finish move ID processing: {(end-start)/60:.2f} minutes")
+
+    all_md = {"games": []}
+    all_moves = []
+    print("Preparing outputs for writing to disk...")
+    start = time.time()
+    for idx, md in enumerate(games_md):
+        mvids = mvids_d[idx]
+        nmoves = len(all_moves)
+        md["start"] = nmoves
+        md["end"] = nmoves + len(mvids)
+        nmoves = md["end"]
+        all_md["games"].append(md)
+        all_moves.extend(mvids)
+
+    end = time.time()
+    print(f"Total time to prepare outputs: {(end-start)/60:.2f} minutes")
+
+    return all_md, all_moves
+
+
+def main_serial(pgn):
     # for debugging
     lineno = 0
     gamestart = 0
 
     # info
     game = 0
-    nbytes = os.path.getsize(args.pgn)
+    nbytes = os.path.getsize(pgn)
     bytes_processed = 0
 
     all_moves = []
     md = {"games": []}
-    fin = open(args.pgn, "r")
+    fin = open(pgn, "r")
     start = time.time()
     nmoves = 0
     while True:
@@ -634,22 +802,46 @@ def main():
                 all_moves.extend(mvids)
                 game += 1
                 if game % 100 == 0:
-                    print_status(nbytes, bytes_processed, start, game)
+                    eta_str = get_eta(nbytes, bytes_processed, start, game)
+                    print(f"processed {game} games (eta: {eta_str})", end="\r")
 
             except Exception as e:
                 print(e)
                 print(f"game start: {gamestart}")
 
             gamestart = lineno + 1
-
     fin.close()
-    print(f"\nNumber of games: {game}")
-    if game > 0:
+    return md, all_moves
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pgn", help="pgn filename", required=True)
+    parser.add_argument("--npy", help="npy output name", required=True)
+    parser.add_argument(
+        "--n_proc",
+        help="number of reader processes",
+        default=os.cpu_count() - 1,
+        type=int,
+    )
+    parser.add_argument(
+        "--serial", help="run in single process", action="store_true", default=False
+    )
+
+    args = parser.parse_args()
+
+    if args.serial:
+        all_md, all_moves = main_serial(args.pgn)
+    else:
+        all_md, all_moves = main_parallel(args.pgn, args.n_proc)
+
+    print(f"\nNumber of games: {len(all_md['games'])}")
+    if len(all_md["games"]) > 0:
         mdfile = f"{args.npy}_md.npy"
         mvfile = f"{args.npy}_moves.npy"
-        md["shape"] = len(all_moves)
-        np.save(mdfile, md, allow_pickle=True)
-        output = np.memmap(mvfile, dtype="int32", mode="w+", shape=md["shape"])
+        all_md["shape"] = len(all_moves)
+        np.save(mdfile, all_md, allow_pickle=True)
+        output = np.memmap(mvfile, dtype="int32", mode="w+", shape=all_md["shape"])
         output[:] = all_moves[:]
 
 
