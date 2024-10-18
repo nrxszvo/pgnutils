@@ -1,44 +1,14 @@
-from parse_pgn import main_parallel
+from parse_pgn import ParallelParser
 import os
 import re
 import wget
 import pyzstd
-import linecache
-import tracemalloc
 import numpy as np
 import argparse
+import time
 
 
-def display_snap(snapshot, key_type="lineno", limit=10):
-    snapshot = snapshot.filter_traces(
-        (
-            tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
-            tracemalloc.Filter(False, "<unknown>"),
-        )
-    )
-    top_stats = snapshot.statistics(key_type)
-    print("Top %s lines" % limit)
-    for index, stat in enumerate(top_stats[:limit], 1):
-        frame = stat.traceback[0]
-        # replace "/path/to/module/file.py" with "module/file.py"
-        filename = os.sep.join(frame.filename.split(os.sep)[-2:])
-        print(
-            "#%s: %s:%s: %.1f KiB" % (index, filename, frame.lineno, stat.size / 1024)
-        )
-        line = linecache.getline(frame.filename, frame.lineno).strip()
-        if line:
-            print("    %s" % line)
-
-    other = top_stats[limit:]
-    if other:
-        size = sum(stat.size for stat in other)
-        print("%s other: %.1f KiB" % (len(other), size / 1024))
-    total = sum(stat.size for stat in top_stats)
-    print("Total allocated size: %.1f KiB" % (total / 1024))
-
-
-def main(list_fn, npy_dir):
-    # tracemalloc.start()
+def main(list_fn, npy_dir, n_proc, save_intermediate):
     existing = []
     for fn in os.listdir(npy_dir):
         m = re.match("lichess_([0-9\-]+)_md\.npy", fn)
@@ -52,7 +22,9 @@ def main(list_fn, npy_dir):
             if m is not None and m.group(1) not in existing:
                 to_proc.append((m.group(1), line.rstrip()))
 
+    pgn_parser = ParallelParser(n_proc)
     for npyname, url in to_proc:
+        start = time.time()
         m = re.match(".*(lichess_db.*pgn\.zst)", url)
         zst = m.group(1)
         pgn_fn = zst[:-4]
@@ -68,10 +40,11 @@ def main(list_fn, npy_dir):
             pyzstd.decompress_stream(fin, fout)
             fin.close()
             fout.close()
-            os.remove(zst)
+            if not save_intermediate:
+                os.remove(zst)
 
         print("parsing pgn...")
-        all_md, all_moves = main_parallel(pgn_fn, os.cpu_count() - 1)
+        all_md, all_moves = pgn_parser.parse(pgn_fn)
 
         print(f"\nNumber of games: {len(all_md['games'])}")
         if len(all_md["games"]) > 0:
@@ -82,9 +55,15 @@ def main(list_fn, npy_dir):
             output = np.memmap(mvfile, dtype="int32", mode="w+", shape=all_md["shape"])
             output[:] = all_moves[:]
 
-        os.remove(pgn_fn)
-        # snapshot = tracemalloc.take_snapshot()
-        # display_snap(snapshot)
+        if not save_intermediate:
+            os.remove(pgn_fn)
+        end = time.time()
+        nsec = end - start
+        hr = int(nsec // 3600)
+        minute = int((nsec % 3600) // 60)
+        sec = int(nsec % 60)
+        print(f"Total processing time: {hr}:{minute:02d}:{sec:02d}")
+    pgn_parser.close()
 
 
 if __name__ == "__main__":
@@ -95,5 +74,12 @@ if __name__ == "__main__":
         help="txt file containing list of pgn zips to download and parse",
     )
     parser.add_argument("--npy", default="npy", help="folder to support npy files")
+    parser.add_argument("--save", action="store_true", help="save intermediate outputs")
+    parser.add_argument(
+        "--n_proc",
+        default=os.cpu_count() - 1,
+        help="number of reader processes",
+        type=int,
+    )
     args = parser.parse_args()
-    main(args.list, args.npy)
+    main(args.list, args.npy, args.n_proc, args.save)
