@@ -5,6 +5,7 @@ import os
 import time
 import datetime
 from multiprocessing import Process, Queue
+import traceback
 
 
 def sign(v):
@@ -470,7 +471,6 @@ def match_next_move(move_str, idx, curmv):
 
 def parse_moves(move_str):
     board, white, black = board_state()
-    move_str = move_str[:-5]  # chop result
     mvids = []
     bm = None
     curmv = 1
@@ -478,6 +478,8 @@ def parse_moves(move_str):
 
     while idx < len(move_str):
         idx, m = match_next_move(move_str, idx, curmv)
+        if idx == len(move_str):
+            break
         wm = m.group(1)
         mvdata = parse_move(wm, bm, COLORW)
         mvid = infer_mvid(mvdata, board, white, black)
@@ -508,31 +510,45 @@ def init_state(state={}):
     return state
 
 
+TERM_PATS = [
+    "Norma",
+    "Time forfeit",
+    "won on time",
+    "won by resignation",
+    "won by checkmate",
+    "Game drawn",
+]
+
+
 def process_raw_line(line, state):
-    if line[0] == "[":
-        if line[:6] == "[Event":
-            init_state(state)
-        elif line[:9] == "[WhiteElo":
-            state["welo"] = line
-        elif line[:9] == "[BlackElo":
-            state["belo"] = line
-        elif line[:12] == "[TimeControl":
-            if line == '[TimeControl "600+0"]\n':
-                state["valid_time"] = True
-        elif line[:12] == "[Termination":
-            m = re.match('\[Termination "(.+)"\]\n', line)
-            if m.group(1) in ["Normal", "Time forfeit"]:
-                state["valid_term"] = True
-    elif line[0] == "1":
-        if state["valid_time"] and state["valid_term"]:
-            mw = re.match('\[WhiteElo "([0-9]+)"\]', state["welo"])
-            mb = re.match('\[BlackElo "([0-9]+)"\]', state["belo"])
-            if mw and mb:
-                state["welo"] = int(mw.group(1))
-                state["belo"] = int(mb.group(1))
-                state["move_str"] = line
-                return COMPLETE
-        return INVALID
+    line = line.strip()
+    if len(line) > 0:
+        if line[0] == "[":
+            if line[:6] == "[Event":
+                init_state(state)
+            elif line[:9] == "[WhiteElo":
+                state["welo"] = line
+            elif line[:9] == "[BlackElo":
+                state["belo"] = line
+            elif line[:12] == "[TimeControl":
+                if line in ['[TimeControl "600+0"]', '[TimeControl "600"]']:
+                    state["valid_time"] = True
+            elif line[:12] == "[Termination":
+                m = re.match('\[Termination "(.+)"\]', line)
+                for tp in TERM_PATS:
+                    if tp in m.group(1):
+                        state["valid_term"] = True
+                        break
+        elif line[0] == "1":
+            if state["valid_time"] and state["valid_term"]:
+                mw = re.match('\[WhiteElo "([0-9]+)"\]', state["welo"])
+                mb = re.match('\[BlackElo "([0-9]+)"\]', state["belo"])
+                if mw and mb:
+                    state["welo"] = int(mw.group(1))
+                    state["belo"] = int(mb.group(1))
+                    state["move_str"] = line
+                    return COMPLETE
+            return INVALID
     return INCOMPLETE
 
 
@@ -561,11 +577,10 @@ def load_games(pgn, games_q, num_readers, output_q):
         for line in fin:
             bytes_processed += len(line)
             code = process_raw_line(line, state)
-            if code in [COMPLETE, INVALID]:
-                if code == COMPLETE:
-                    break
-                else:
-                    state = init_state()
+            if code == COMPLETE:
+                break
+            elif code == INVALID:
+                init_state(state)
         else:
             break  # EOF
 
@@ -579,16 +594,21 @@ def load_games(pgn, games_q, num_readers, output_q):
                 }
             )
             if idx % 1000 == 0:
-                eta_str = get_eta(nbytes, bytes_processed, start, idx)
-                print(
-                    f"parsed {idx} games (eta: {eta_str}) (output q size: {output_q.qsize()})",
-                    end="\r",
-                )
+                eta_str = get_eta(nbytes, bytes_processed, start)
+                status_str = f"parsed {idx} games (eta: {eta_str}) output q size: {output_q.qsize()})"
+                output_q.put(("STATUS", status_str))
 
+    fin.close()
+    output_q.put(("GAMES", games))
     for _ in range(num_readers):
         games_q.put(("DONE", None))
 
-    return games
+
+def start_games_reader(pgn, games_q, n_proc, output_q):
+    games_p = Process(target=load_games, args=(pgn, games_q, n_proc, output_q))
+    games_p.daemon = True
+    games_p.start()
+    return games_p
 
 
 PIECE_TO_NAME = [
@@ -671,6 +691,8 @@ def evaluate_game(gameid, move_str, mvids):
     while mv_idx < len(move_str):
         try:
             mv_idx, m = match_next_move(move_str, mv_idx, curmv)
+            if mv_idx == len(move_str):
+                break
             for mv in m.groups():
                 mvid = mvids[id_idx]
                 id_idx += 1
@@ -682,6 +704,7 @@ def evaluate_game(gameid, move_str, mvids):
         except Exception as e:
             print(e)
             print(f"game {gameid}, move {curmv}")
+
     return results
 
 
@@ -711,30 +734,36 @@ def start_reader_procs(num_readers, proc, args):
 
 
 def main_parallel(pgn, n_proc):
+    start = time.time()
     games_q = Queue()
     output_q = Queue()
-    start_reader_procs(n_proc, process_games, (games_q, output_q))
-    start = time.time()
-    games_md = load_games(pgn, games_q, n_proc, output_q)
-    end = time.time()
-    print(
-        f"\nTotal time to segment input into individual games: {(end-start)/60:.2f} minutes"
-    )
+    reader_ps = start_reader_procs(n_proc, process_games, (games_q, output_q))
+    game_p = start_games_reader(pgn, games_q, n_proc, output_q)
 
     mvids_d = {}
     n_finished = 0
-    print("Finishing move ID processing...")
-    start = time.time()
+    games_md = None
     while True:
-        idx, mvids = output_q.get()
-        if idx == "DONE":
+        code, data = output_q.get()
+        if code == "STATUS":
+            print(data, end="\r")
+        elif code == "GAMES":
+            games_md = data
+        elif code == "DONE":
             n_finished += 1
-            if n_finished == n_proc:
-                break
         else:
-            mvids_d[idx] = mvids
+            mvids_d[code] = data
+        if n_finished == n_proc and games_md is not None:
+            break
+
+    games_q.close()
+    game_p.join()
+    output_q.close()
+    for rp in reader_ps:
+        rp.join()
+
     end = time.time()
-    print(f"Total time to finish move ID processing: {(end-start)/60:.2f} minutes")
+    print(f"Total time to process pgns: {(end-start)/60:.2f} minutes")
 
     all_md = {"games": []}
     all_moves = []
@@ -755,29 +784,39 @@ def main_parallel(pgn, n_proc):
     return all_md, all_moves
 
 
-def main_serial(pgn):
+def main_serial(pgn_file=None, pgn_str=None):
     # for debugging
     lineno = 0
     gamestart = 0
 
     # info
     game = 0
-    nbytes = os.path.getsize(pgn)
     bytes_processed = 0
 
     all_moves = []
     md = {"games": []}
-    fin = open(pgn, "r")
+    if pgn_file is not None:
+        nbytes = os.path.getsize(pgn_file)
+        fin = open(pgn_file, "r")
+
+    else:
+        nbytes = len(pgn_str)
+        fin = pgn_str.split("\n")
+
     start = time.time()
     nmoves = 0
     while True:
         state = init_state()
         data = []
-        for line in fin:
+        for i, line in enumerate(fin):
             bytes_processed += len(line)
             data.append(line)
             lineno += 1
-            code = process_raw_line(line, state)
+            try:
+                code = process_raw_line(line, state)
+            except Exception as e:
+                print(traceback.format_exc())
+                print(e)
             if code in [COMPLETE, INVALID]:
                 if code == COMPLETE:
                     break
@@ -787,9 +826,18 @@ def main_serial(pgn):
         else:
             break  # EOF
 
+        if pgn_str is not None:
+            fin = fin[i:]
+
         if code == COMPLETE:
             try:
                 mvids = parse_moves(state["move_str"])
+                errs = evaluate_game(gamestart, state["move_str"], mvids)
+                if len(errs) > 0:
+                    for err in errs:
+                        print(err)
+                    raise Exception("evaluation failed")
+
                 md["games"].append(
                     {
                         "WhiteElo": state["welo"],
@@ -802,7 +850,7 @@ def main_serial(pgn):
                 all_moves.extend(mvids)
                 game += 1
                 if game % 100 == 0:
-                    eta_str = get_eta(nbytes, bytes_processed, start, game)
+                    eta_str = get_eta(nbytes, bytes_processed, start)
                     print(f"processed {game} games (eta: {eta_str})", end="\r")
 
             except Exception as e:
@@ -810,7 +858,10 @@ def main_serial(pgn):
                 print(f"game start: {gamestart}")
 
             gamestart = lineno + 1
-    fin.close()
+
+    if pgn_file is not None:
+        fin.close()
+
     return md, all_moves
 
 
@@ -831,7 +882,7 @@ def main():
     args = parser.parse_args()
 
     if args.serial:
-        all_md, all_moves = main_serial(args.pgn)
+        all_md, all_moves = main_serial(pgn_file=args.pgn)
     else:
         all_md, all_moves = main_parallel(args.pgn, args.n_proc)
 
