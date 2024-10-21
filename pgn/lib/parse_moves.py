@@ -85,7 +85,12 @@ def process_raw_line(line, state):
                         state["valid_term"] = True
                         break
         elif line[0] == "1":
-            if state["valid_time"] and state["valid_term"]:
+            if (
+                state["valid_time"]
+                and state["valid_term"]
+                and state["welo"] is not None
+                and state["belo"] is not None
+            ):
                 mw = re.match('\[WhiteElo "([0-9]+)"\]', state["welo"])
                 mb = re.match('\[BlackElo "([0-9]+)"\]', state["belo"])
                 if mw and mb:
