@@ -19,9 +19,10 @@ def load_games(pgn_q, games_q, num_readers, lock):
         else:
             bytes_processed = 0
             gameid = 0
+            gamestart = 0
             with open(pgn) as fin:
                 processor = PgnProcessor()
-                for line in fin:
+                for i, line in enumerate(fin):
                     bytes_processed += len(line)
                     code = processor.process_line(line)
                     if code == "COMPLETE":
@@ -38,9 +39,11 @@ def load_games(pgn_q, games_q, num_readers, lock):
                                     bytes_processed,
                                     md,
                                     processor.get_move_str(),
+                                    f"{pgn}:{gamestart}",
                                 ),
                             )
                         )
+                        gamestart = i + 1
 
             for _ in range(num_readers):
                 games_q.put(("FILE_DONE", gameid))
@@ -62,13 +65,20 @@ def process_games(games_q, output_q, pid, lock):
                 break
 
         else:
-            bytesproc, md, move_str = data
-            mvids = parse_moves(move_str)
-            errs = validate_game(md["gameid"], move_str, mvids)
-            if len(errs) == 0:
-                output_q.put(("GAME", (pid, bytesproc, md, mvids)))
-            else:
-                output_q.put(("ERROR", errs))
+            bytesproc, md, move_str, dbg_info = data
+            try:
+                mvids = parse_moves(move_str)
+                errs = validate_game(md["gameid"], move_str, mvids)
+                if len(errs) == 0:
+                    output_q.put(("GAME", (pid, bytesproc, md, mvids)))
+                else:
+                    output_q.put(("ERROR", errs))
+            except Exception as e:
+                with open("parser_errs.txt", "a") as ferr:
+                    ferr.write(f"{dbg_info}\n")
+                    ferr.write(str(md) + "\n")
+                    ferr.write(str(e) + "\n\n")
+                output_q.put(("INVALID", bytesproc))
 
 
 def start_reader_procs(num_readers, games_q, output_q, lock):
@@ -119,11 +129,13 @@ class ParallelParser:
         ngames = 0
         prog = 0
         total_games = float("inf")
+        n_finished = 0
         start = time.time()
-        while ngames < total_games:
+        while ngames < total_games or n_finished < self.n_proc:
             code, data = self.output_q.get()
             if code == "DONE":
                 total_games = data
+                n_finished += 1
             elif code == "ERROR":
                 self.print_lock.acquire()
                 try:
@@ -132,6 +144,8 @@ class ParallelParser:
                         print(err)
                 finally:
                     self.print_lock.release()
+            elif code == "INVALID":
+                ngames += 1
             elif code == "GAME":
                 pid, bytesproc, md, mvids = data
                 max_bp = max(max_bp, bytesproc)
@@ -145,13 +159,11 @@ class ParallelParser:
                 all_mvids.extend(mvids)
 
                 total_games_est = ngames / (bytesproc / nbytes)
-                cur_prog = int(100 * ngames / total_games_est)
+                cur_prog = int(10 * ngames / total_games_est)
                 if cur_prog > prog:
                     prog = cur_prog
                     eta_str = get_eta(nbytes, max_bp, start)
-                    status_str = (
-                        f"{name}: parsed {ngames} games ({prog}% done, eta: {eta_str})"
-                    )
+                    status_str = f"{name}: parsed {ngames} games ({10*prog}% done, eta: {eta_str})"
                     self.print_lock.acquire()
                     try:
                         print(status_str)
@@ -186,6 +198,7 @@ def main_serial(pgn_file):
         data = []
         for i, line in enumerate(fin):
             bytes_processed += len(line)
+            print(f"{100*bytes_processed/nbytes:.1f}% done... ({game} games)", end="\r")
             data.append(line)
             lineno += 1
             try:
@@ -218,10 +231,14 @@ def main_serial(pgn_file):
                         print(f"processed {game} games (eta: {eta_str})", end="\r")
 
                 except Exception as e:
+                    breakpoint()
                     print(e)
                     print(f"game start: {gamestart}")
 
                 gamestart = lineno + 1
+
+            if code in ["COMPLETE", "INVALID"]:
+                data = []
 
         else:
             break  # EOF
@@ -251,7 +268,7 @@ def main():
         all_md, all_moves = main_serial(args.pgn)
     else:
         parser = ParallelParser(args.n_proc)
-        all_md, all_moves = parser.parse(args.pgn)
+        all_md, all_moves = parser.parse(args.pgn, os.path.basename(args.npy))
         parser.close()
 
     if len(all_md["games"]) > 0:

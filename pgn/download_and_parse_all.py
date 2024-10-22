@@ -52,8 +52,10 @@ def write_npys(npy_dir, npyname, all_md, all_moves):
         mvfile = f"{npy_dir}/lichess_{npyname}_moves.npy"
         all_md["shape"] = len(all_moves)
         np.save(mdfile, all_md, allow_pickle=True)
-        output = np.memmap(mvfile, dtype="int32", mode="w+", shape=all_md["shape"])
-        output[:] = all_moves[:]
+        shape = max(1, all_md["shape"])
+        output = np.memmap(mvfile, dtype="int32", mode="w+", shape=shape)
+        if shape > 0:
+            output[:] = all_moves[:]
 
 
 class PrintSafe:
