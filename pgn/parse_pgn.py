@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+import datetime
 import traceback
 from multiprocessing import Lock, Process, Queue
 
@@ -29,6 +30,7 @@ def load_games(pgn_q, games_q, num_readers, lock):
                         md = {
                             "WhiteElo": processor.get_welo(),
                             "BlackElo": processor.get_belo(),
+                            "time": processor.get_time(),
                             "gameid": gameid,
                         }
                         gameid += 1
@@ -56,7 +58,7 @@ def start_games_reader(pgn_q, games_q, n_proc, output_q):
     return games_p
 
 
-def process_games(games_q, output_q, pid, lock):
+def process_games(games_q, output_q, pid, lock, session_id):
     while True:
         code, data = games_q.get()
         if code in ["FILE_DONE", "SESSION_DONE"]:
@@ -67,24 +69,26 @@ def process_games(games_q, output_q, pid, lock):
         else:
             bytesproc, md, move_str, dbg_info = data
             try:
-                mvids = parse_moves(move_str)
+                mvids, clk = parse_moves(move_str)
                 errs = validate_game(md["gameid"], move_str, mvids)
                 if len(errs) == 0:
-                    output_q.put(("GAME", (pid, bytesproc, md, mvids)))
+                    output_q.put(("GAME", (pid, bytesproc, md, mvids, clk)))
                 else:
                     output_q.put(("ERROR", errs))
             except Exception as e:
-                with open("parser_errs.txt", "a") as ferr:
+                with open(f"{session_id}_errs.txt", "a") as ferr:
                     ferr.write(f"{dbg_info}\n")
                     ferr.write(str(md) + "\n")
                     ferr.write(str(e) + "\n\n")
                 output_q.put(("INVALID", bytesproc))
 
 
-def start_reader_procs(num_readers, games_q, output_q, lock):
+def start_reader_procs(num_readers, games_q, output_q, lock, session_id):
     procs = []
     for pid in range(num_readers):
-        reader_p = Process(target=process_games, args=(games_q, output_q, pid, lock))
+        reader_p = Process(
+            target=process_games, args=(games_q, output_q, pid, lock, session_id)
+        )
         reader_p.daemon = True
         reader_p.start()
         procs.append(reader_p)
@@ -92,14 +96,15 @@ def start_reader_procs(num_readers, games_q, output_q, lock):
 
 
 class ParallelParser:
-    def __init__(self, n_proc):
+    def __init__(self, n_proc, session_id=datetime.datetime.now().isoformat()):
         self.n_proc = n_proc
         self.print_lock = Lock()
         self.pgn_q = Queue()
         self.games_q = Queue()
         self.output_q = Queue()
+        self.session_id = session_id
         self.reader_ps = start_reader_procs(
-            n_proc, self.games_q, self.output_q, self.print_lock
+            n_proc, self.games_q, self.output_q, self.print_lock, self.session_id
         )
         self.game_p = start_games_reader(
             self.pgn_q, self.games_q, n_proc, self.print_lock
@@ -114,7 +119,7 @@ class ParallelParser:
         self.pgn_q.close()
         for rp in [self.game_p] + self.reader_ps:
             try:
-                rp.join(5)
+                rp.join(0.1)
             except Exception as e:
                 print(e)
                 rp.kill()
@@ -124,12 +129,13 @@ class ParallelParser:
         self.pgn_q.put(pgn)
         games = []
         all_mvids = []
-        pid_counts = [0] * self.n_proc
+        all_clk = []
         max_bp = 0
         ngames = 0
         prog = 0
         total_games = float("inf")
         n_finished = 0
+        nmoves = 0
         start = time.time()
         while ngames < total_games or n_finished < self.n_proc:
             code, data = self.output_q.get()
@@ -147,16 +153,16 @@ class ParallelParser:
             elif code == "INVALID":
                 ngames += 1
             elif code == "GAME":
-                pid, bytesproc, md, mvids = data
+                pid, bytesproc, md, mvids, clk = data
                 max_bp = max(max_bp, bytesproc)
                 ngames += 1
 
-                pid_counts[pid] += 1
-                nmoves = len(all_mvids)
                 md["start"] = nmoves
-                md["end"] = nmoves + len(mvids)
+                nmoves += len(mvids)
+                md["end"] = nmoves
                 games.append(md)
                 all_mvids.extend(mvids)
+                all_clk.extend(clk)
 
                 total_games_est = ngames / (bytesproc / nbytes)
                 cur_prog = int(10 * ngames / total_games_est)
@@ -173,8 +179,8 @@ class ParallelParser:
             else:
                 raise Exception(f"invalid code: {code}")
 
-        all_md = {"shape": len(all_mvids), "games": games}
-        return all_md, all_mvids
+        all_md = {"shape": nmoves, "games": games}
+        return all_md, all_mvids, all_clk
 
 
 def main_serial(pgn_file):
@@ -187,6 +193,7 @@ def main_serial(pgn_file):
     bytes_processed = 0
 
     all_moves = []
+    all_clk = []
     md = {"games": []}
     nbytes = os.path.getsize(pgn_file)
     fin = open(pgn_file, "r")
@@ -208,7 +215,7 @@ def main_serial(pgn_file):
                 print(e)
             if code == "COMPLETE":
                 try:
-                    mvids = parse_moves(processor.get_move_str())
+                    mvids, clk = parse_moves(processor.get_move_str())
                     errs = validate_game(gamestart, processor.get_move_str(), mvids)
                     if len(errs) > 0:
                         for err in errs:
@@ -219,19 +226,20 @@ def main_serial(pgn_file):
                         {
                             "WhiteElo": processor.get_welo(),
                             "BlackElo": processor.get_belo(),
+                            "time": processor.get_time(),
                             "start": nmoves,
                             "length": len(mvids),
                         }
                     )
                     nmoves += len(mvids)
                     all_moves.extend(mvids)
+                    all_clk.extend(clk)
                     game += 1
                     if game % 100 == 0:
                         eta_str = get_eta(nbytes, bytes_processed, start)
                         print(f"processed {game} games (eta: {eta_str})", end="\r")
 
                 except Exception as e:
-                    breakpoint()
                     print(e)
                     print(f"game start: {gamestart}")
 
@@ -245,7 +253,7 @@ def main_serial(pgn_file):
 
         fin.close()
 
-    return md, all_moves
+    return md, all_moves, all_clk
 
 
 def main():
@@ -265,19 +273,22 @@ def main():
     args = parser.parse_args()
 
     if args.serial:
-        all_md, all_moves = main_serial(args.pgn)
+        all_md, all_moves, all_clk = main_serial(args.pgn)
     else:
         parser = ParallelParser(args.n_proc)
-        all_md, all_moves = parser.parse(args.pgn, os.path.basename(args.npy))
+        all_md, all_moves, all_clk = parser.parse(args.pgn, os.path.basename(args.npy))
         parser.close()
 
     if len(all_md["games"]) > 0:
         mdfile = f"{args.npy}_md.npy"
         mvfile = f"{args.npy}_moves.npy"
+        clkfile = f"{args.npy}_clk.npy"
         all_md["shape"] = len(all_moves)
         np.save(mdfile, all_md, allow_pickle=True)
         output = np.memmap(mvfile, dtype="int32", mode="w+", shape=all_md["shape"])
         output[:] = all_moves[:]
+        output = np.memmap(clkfile, dtype="int32", mode="w+", shape=all_md["shape"])
+        output[:] = all_clk[:]
 
 
 if __name__ == "__main__":

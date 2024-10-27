@@ -2,6 +2,7 @@ from . import inference as inf
 import re
 
 MV_PAT = "O-O-O|O-O|[a-hRNBQK]+[0-9=x]*[a-hRNBQK]*[0-9]*[=RNBQ]*"
+CLK_PAT = "\{.*\[%clk ([0-9:]+)\].*\}"
 
 
 def moveno_str(moveno):
@@ -13,43 +14,58 @@ def match_next_move(move_str, idx, curmv):
     nextmv = moveno_str(curmv + 1)
     while idx < len(move_str) and move_str[idx : idx + len(nextmv)] != nextmv:
         idx += 1
-    m = re.match(f"{curmv}\..* ({MV_PAT}).* ({MV_PAT})", move_str[mvstart:idx])
+    m = re.match(
+        f"{curmv}\..* ({MV_PAT}).*{CLK_PAT}.* ({MV_PAT}).*{CLK_PAT}",
+        move_str[mvstart:idx],
+    )
     if m is None:
-        m = re.match(f"{curmv}\..* ({MV_PAT})", move_str[mvstart:idx])
+        m = re.match(f"{curmv}\..* ({MV_PAT}).*{CLK_PAT}", move_str[mvstart:idx])
+
     return idx, m
+
+
+def clk_to_sec(time_str):
+    m = int(time_str[2:4])
+    s = int(time_str[5:7])
+    return m * 60 + s
 
 
 def parse_moves(move_str):
     board, white, black = inf.board_state()
     mvids = []
+    clk = []
     bm = None
     curmv = 1
     idx = 0
 
     while idx < len(move_str):
         idx, m = match_next_move(move_str, idx, curmv)
-        if idx == len(move_str):
+        if idx == len(move_str) and m is None:
             break
+        if len(m.groups()) not in [2, 4]:
+            raise Exception("clock field missing")
+
         wm = m.group(1)
         mvdata = inf.parse_move(wm, bm, inf.COLORW)
         mvid = inf.infer_mvid(mvdata, board, white, black)
         mvids.append(mvid)
+        clk.append(clk_to_sec(m.group(2)))
 
-        if len(m.groups()) == 2:
-            bm = m.group(2)
+        if len(m.groups()) == 4:
+            bm = m.group(3)
             mvdata = inf.parse_move(bm, wm, inf.COLORB)
             mvid = inf.infer_mvid(mvdata, board, black, white)
             mvids.append(mvid)
-
+            clk.append(clk_to_sec(m.group(4)))
         curmv += 1
 
-    return mvids
+    return mvids, clk
 
 
 def init_state(state={}):
     state["welo"] = None
     state["belo"] = None
-    state["valid_time"] = False
+    state["time"] = 0
     state["valid_term"] = False
     state["move_str"] = None
     return state
@@ -76,8 +92,12 @@ def process_raw_line(line, state):
             elif line[:9] == "[BlackElo":
                 state["belo"] = line
             elif line[:12] == "[TimeControl":
-                if line in ['[TimeControl "600+0"]', '[TimeControl "600"]']:
-                    state["valid_time"] = True
+                m = re.match('\[TimeControl "([0-9]+)\+*([0-9]+)"\]', line)
+                if m is not None:
+                    tim = int(m.group(1))
+                    inc = 0 if len(m.groups()) == 1 else int(m.group(2))
+                    if inc == 0 and tim <= 1200 and tim >= 600:
+                        state["time"] = tim
             elif line[:12] == "[Termination":
                 m = re.match('\[Termination "(.+)"\]', line)
                 for tp in TERM_PATS:
@@ -86,7 +106,7 @@ def process_raw_line(line, state):
                         break
         elif line[0] == "1":
             if (
-                state["valid_time"]
+                state["time"] > 0
                 and state["valid_term"]
                 and state["welo"] is not None
                 and state["belo"] is not None
@@ -125,3 +145,6 @@ class PgnProcessor:
 
     def get_move_str(self):
         return self.state["move_str"]
+
+    def get_time(self):
+        return self.state["time"]

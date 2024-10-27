@@ -14,9 +14,9 @@ from parse_pgn import ParallelParser
 def collect_existing_npy(npy_dir):
     existing = []
     for fn in os.listdir(npy_dir):
-        m = re.match("lichess_([0-9\-]+)_md\.npy", fn)
+        m = re.match("lichess_[0-9\-]+_md\.npy", fn)
         if m is not None:
-            existing.append(m.group(1))
+            existing.append(fn)
     return existing
 
 
@@ -26,8 +26,10 @@ def collect_remaining(list_fn, npy_dir):
     with open(list_fn) as f:
         for line in f:
             m = re.match(".+standard_rated_([0-9\-]+)\.pgn\.zst", line)
-            if m is not None and m.group(1) not in existing:
-                to_proc.append((line.rstrip(), m.group(1)))
+            if m is not None:
+                mdfile = f"lichess_{m.group(1)}_md.npy"
+                if mdfile not in existing:
+                    to_proc.append((line.rstrip(), m.group(1)))
     return to_proc
 
 
@@ -46,21 +48,23 @@ def decompress(zst, pgn_fn):
     fout.close()
 
 
-def write_npys(npy_dir, npyname, all_md, all_moves):
+def write_npys(npy_dir, npyname, all_md, all_mvids, all_clk):
     if len(all_md["games"]) > 0:
         mdfile = f"{npy_dir}/lichess_{npyname}_md.npy"
-        mvfile = f"{npy_dir}/lichess_{npyname}_moves.npy"
-        all_md["shape"] = len(all_moves)
         np.save(mdfile, all_md, allow_pickle=True)
-        shape = max(1, all_md["shape"])
-        output = np.memmap(mvfile, dtype="int32", mode="w+", shape=shape)
+        mvfile = f"{npy_dir}/lichess_{npyname}_moves.npy"
+        clkfile = f"{npy_dir}/lichess_{npyname}_clk.npy"
+        shape = all_md["shape"]
         if shape > 0:
-            output[:] = all_moves[:]
+            for fn, arr in [(mvfile, all_mvids), (clkfile, all_clk)]:
+                mmap = np.memmap(fn, mode="w+", dtype="int32", shape=shape)
+                mmap[:] = arr[:]
+                mmap.flush()
 
 
 class PrintSafe:
-    def __init__(self, lock):
-        self.lock = lock
+    def __init__(self):
+        self.lock = Lock()
 
     def __call__(self, string, end="\n"):
         self.lock.acquire()
@@ -106,25 +110,27 @@ def main(list_fn, npy_dir, n_proc, save_intermediate):
     to_proc = collect_remaining(list_fn, npy_dir)
     url_q = Queue()
     zst_q = Queue()
-    print_lock = Lock()
     pgn_parser = ParallelParser(n_proc)
-    print_safe = PrintSafe(print_lock)
+    print_safe = PrintSafe()
 
     dl_p = start_download_proc(url_q, zst_q, print_safe, save_intermediate)
     url, npyname = to_proc[0]
     url_q.put((url, npyname))
     try:
-        for url, next_npy in to_proc[1:] + [("DONE", None)]:
+        for next_url, next_npy in to_proc[1:] + [("DONE", None)]:
             npyname, pgn_fn = zst_q.get()
-            url_q.put((url, next_npy))
+            url_q.put((next_url, next_npy))
 
             print_safe(f"{npyname}: parsing pgn...")
-            (all_md, all_moves), time_str = timeit(
+            (all_md, all_mvids, all_clk), time_str = timeit(
                 lambda: pgn_parser.parse(pgn_fn, npyname)
             )
             print_safe(f"{npyname}: finished parsing in {time_str}")
             print_safe(f"{npyname}: writing {len(all_md['games'])} games to file...")
-            write_npys(npy_dir, npyname, all_md, all_moves)
+            write_npys(npy_dir, npyname, all_md, all_mvids, all_clk)
+            del all_md
+            del all_mvids
+            del all_clk
             if not save_intermediate:
                 os.remove(pgn_fn)
 
@@ -151,7 +157,7 @@ if __name__ == "__main__":
         default="list.txt",
         help="txt file containing list of pgn zips to download and parse",
     )
-    parser.add_argument("--npy", default="npy", help="folder to save npy files")
+    parser.add_argument("--npy", default="npy_w_clk", help="folder to save npy files")
     parser.add_argument("--save", action="store_true", help="save intermediate outputs")
     parser.add_argument(
         "--n_proc",

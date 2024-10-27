@@ -9,6 +9,7 @@ def main():
     parser.add_argument("--n", help="number of consecutive games", default=1, type=int)
     args = parser.parse_args()
 
+    assert args.line > 0, "line number starts at 1"
     n = 0
     with open(args.pgn, "r") as fin:
         lineno = 0

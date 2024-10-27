@@ -80,7 +80,7 @@ def validate_game(gameid, move_str, mvids):
             mv_idx, m = match_next_move(move_str, mv_idx, curmv)
             if mv_idx == len(move_str):
                 break
-            for mv in m.groups():
+            for mv in m.groups()[::2]:
                 mvid = mvids[id_idx]
                 id_idx += 1
                 pfr = decode_mvid(mvid)
@@ -91,5 +91,6 @@ def validate_game(gameid, move_str, mvids):
         except Exception as e:
             err = str(e)
             results.append((gameid, err))
+            break
 
     return results
