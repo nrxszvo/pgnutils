@@ -13,10 +13,9 @@ from parse_pgn import ParallelParser
 
 def collect_existing_npy(npy_dir):
     existing = []
-    for fn in os.listdir(npy_dir):
-        m = re.match("lichess_[0-9\-]+_md\.npy", fn)
-        if m is not None:
-            existing.append(fn)
+    if os.path.exists(f"{npy_dir}/processed.txt"):
+        with open(f"{npy_dir}/processed.txt") as f:
+            existing = [fn.rstrip() for fn in f.readlines()]
     return existing
 
 
@@ -25,11 +24,9 @@ def collect_remaining(list_fn, npy_dir):
     to_proc = []
     with open(list_fn) as f:
         for line in f:
-            m = re.match(".+standard_rated_([0-9\-]+)\.pgn\.zst", line)
-            if m is not None:
-                mdfile = f"lichess_{m.group(1)}_md.npy"
-                if mdfile not in existing:
-                    to_proc.append((line.rstrip(), m.group(1)))
+            npyname = re.match(".+standard_rated_([0-9\-]+)\.pgn\.zst", line).group(1)
+            if npyname not in existing:
+                to_proc.append((line.rstrip(), npyname))
     return to_proc
 
 
@@ -48,18 +45,47 @@ def decompress(zst, pgn_fn):
     fout.close()
 
 
-def write_npys(npy_dir, npyname, all_md, all_mvids, all_clk):
-    if len(all_md["games"]) > 0:
-        mdfile = f"{npy_dir}/lichess_{npyname}_md.npy"
-        np.save(mdfile, all_md, allow_pickle=True)
-        mvfile = f"{npy_dir}/lichess_{npyname}_moves.npy"
-        clkfile = f"{npy_dir}/lichess_{npyname}_clk.npy"
-        shape = all_md["shape"]
-        if shape > 0:
-            for fn, arr in [(mvfile, all_mvids), (clkfile, all_clk)]:
-                mmap = np.memmap(fn, mode="w+", dtype="int32", shape=shape)
-                mmap[:] = arr[:]
-                mmap.flush()
+def write_npys(npy_dir, npyname, ngames, nmoves, elos, gamestarts, moves):
+    with open(f"{npy_dir}/processed.txt", "a") as f:
+        f.write(npyname + "\n")
+
+    if nmoves == 0:
+        return
+
+    mdfile = f"{npy_dir}/md.npy"
+    elofile = f"{npy_dir}/elos.npy"
+    gsfile = f"{npy_dir}/gamestarts.npy"
+    mvfile = f"{npy_dir}/moves.npy"
+
+    if os.path.exists(mdfile):
+        md = np.load(mdfile, allow_pickle=True).item()
+        all_elos = np.load(elofile, allow_pickle=True)
+        all_gamestarts = np.load(gsfile, allow_pickle=True)
+        all_moves = np.load(mvfile, allow_pickle=True)
+    else:
+        md = {"ngames": 0, "nmoves": 0}
+        all_elos = np.empty((0, 2), dtype="int16")
+        all_gamestarts = np.empty(0, dtype="int64")
+        all_moves = np.empty((0, 2), dtype="int16")
+
+    all_elos = np.concatenate([all_elos, elos[:ngames]])
+    np.save(elofile, all_elos, allow_pickle=True)
+    del all_elos
+
+    for i in range(ngames):
+        gamestarts[i] += md["nmoves"]
+    all_gamestarts = np.concatenate([all_gamestarts, gamestarts[:ngames]])
+    np.save(gsfile, all_gamestarts, allow_pickle=True)
+    del all_gamestarts
+
+    all_moves = np.concatenate([all_moves, moves[:nmoves]])
+    np.save(mvfile, all_moves, allow_pickle=True)
+    del all_moves
+
+    md["ngames"] += ngames
+    md["nmoves"] += nmoves
+
+    np.save(mdfile, md, allow_pickle=True)
 
 
 class PrintSafe:
@@ -108,10 +134,15 @@ def start_download_proc(url_q, zst_q, print_safe, save_intermediate):
 
 def main(list_fn, npy_dir, n_proc, save_intermediate):
     to_proc = collect_remaining(list_fn, npy_dir)
+    if len(to_proc) == 0:
+        print("All files already processed")
+        return
+
     url_q = Queue()
     zst_q = Queue()
-    pgn_parser = ParallelParser(n_proc)
+
     print_safe = PrintSafe()
+    pgn_parser = ParallelParser(n_proc, print_safe)
 
     dl_p = start_download_proc(url_q, zst_q, print_safe, save_intermediate)
     url, npyname = to_proc[0]
@@ -122,17 +153,25 @@ def main(list_fn, npy_dir, n_proc, save_intermediate):
             url_q.put((next_url, next_npy))
 
             print_safe(f"{npyname}: parsing pgn...")
-            (all_md, all_mvids, all_clk), time_str = timeit(
+            (ngames, nmoves, all_elos, gamestarts, all_moves), time_str = timeit(
                 lambda: pgn_parser.parse(pgn_fn, npyname)
             )
             print_safe(f"{npyname}: finished parsing in {time_str}")
-            print_safe(f"{npyname}: writing {len(all_md['games'])} games to file...")
-            write_npys(npy_dir, npyname, all_md, all_mvids, all_clk)
-            del all_md
-            del all_mvids
-            del all_clk
+            print_safe(
+                f"{npyname}: writing {ngames:.1e} games and {nmoves:.1e} moves to file..."
+            )
+            write_npys(
+                npy_dir, npyname, ngames, nmoves, all_elos, gamestarts, all_moves
+            )
+            del all_elos
+            del gamestarts
+            del all_moves
             if not save_intermediate:
                 os.remove(pgn_fn)
+
+            if nmoves == 0:
+                print("Last archive contained zero moves: terminating...")
+                break
 
     finally:
         print_safe("closing main")
@@ -140,7 +179,7 @@ def main(list_fn, npy_dir, n_proc, save_intermediate):
         url_q.close()
         zst_q.close()
         try:
-            dl_p.join(5)
+            dl_p.join(0.25)
         except Exception as e:
             print(e)
             dl_p.kill()

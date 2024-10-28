@@ -3,14 +3,14 @@ import os
 import time
 import datetime
 import traceback
-from multiprocessing import Lock, Process, Queue
+from multiprocessing import Process, Queue
 
 import numpy as np
 
 from lib import PgnProcessor, parse_moves, validate_game, get_eta
 
 
-def load_games(pgn_q, games_q, num_readers, lock):
+def load_games(pgn_q, games_q, num_readers):
     while True:
         pgn = pgn_q.get()
         if pgn == "DONE":
@@ -27,19 +27,17 @@ def load_games(pgn_q, games_q, num_readers, lock):
                     bytes_processed += len(line)
                     code = processor.process_line(line)
                     if code == "COMPLETE":
-                        md = {
-                            "WhiteElo": processor.get_welo(),
-                            "BlackElo": processor.get_belo(),
-                            "time": processor.get_time(),
-                            "gameid": gameid,
-                        }
+                        elos = np.array(
+                            [processor.get_welo(), processor.get_belo()], dtype="int16"
+                        )
                         gameid += 1
                         games_q.put(
                             (
                                 "GAME",
                                 (
                                     bytes_processed,
-                                    md,
+                                    gameid,
+                                    elos,
                                     processor.get_move_str(),
                                     f"{pgn}:{gamestart}",
                                 ),
@@ -51,14 +49,14 @@ def load_games(pgn_q, games_q, num_readers, lock):
                 games_q.put(("FILE_DONE", gameid))
 
 
-def start_games_reader(pgn_q, games_q, n_proc, output_q):
-    games_p = Process(target=load_games, args=(pgn_q, games_q, n_proc, output_q))
+def start_games_reader(pgn_q, games_q, n_proc):
+    games_p = Process(target=load_games, args=(pgn_q, games_q, n_proc))
     games_p.daemon = True
     games_p.start()
     return games_p
 
 
-def process_games(games_q, output_q, pid, lock, session_id):
+def process_games(games_q, output_q, pid, session_id):
     while True:
         code, data = games_q.get()
         if code in ["FILE_DONE", "SESSION_DONE"]:
@@ -67,27 +65,27 @@ def process_games(games_q, output_q, pid, lock, session_id):
                 break
 
         else:
-            bytesproc, md, move_str, dbg_info = data
+            bytesproc, gameid, elos, move_str, dbg_info = data
             try:
-                mvids, clk = parse_moves(move_str)
-                errs = validate_game(md["gameid"], move_str, mvids)
+                moves = parse_moves(move_str)
+                errs = validate_game(gameid, move_str, moves[:, 0])
                 if len(errs) == 0:
-                    output_q.put(("GAME", (pid, bytesproc, md, mvids, clk)))
+                    output_q.put(("GAME", (pid, bytesproc, gameid, elos, moves)))
                 else:
                     output_q.put(("ERROR", errs))
             except Exception as e:
                 with open(f"{session_id}_errs.txt", "a") as ferr:
                     ferr.write(f"{dbg_info}\n")
-                    ferr.write(str(md) + "\n")
+                    ferr.write(str(elos) + "\n")
                     ferr.write(str(e) + "\n\n")
                 output_q.put(("INVALID", bytesproc))
 
 
-def start_reader_procs(num_readers, games_q, output_q, lock, session_id):
+def start_reader_procs(num_readers, games_q, output_q, session_id):
     procs = []
     for pid in range(num_readers):
         reader_p = Process(
-            target=process_games, args=(games_q, output_q, pid, lock, session_id)
+            target=process_games, args=(games_q, output_q, pid, session_id)
         )
         reader_p.daemon = True
         reader_p.start()
@@ -96,19 +94,20 @@ def start_reader_procs(num_readers, games_q, output_q, lock, session_id):
 
 
 class ParallelParser:
-    def __init__(self, n_proc, session_id=datetime.datetime.now().isoformat()):
+    def __init__(
+        self, n_proc, print_safe, session_id=datetime.datetime.now().isoformat()
+    ):
         self.n_proc = n_proc
-        self.print_lock = Lock()
+        self.print = print_safe
+        self.print_freq = 1  # print update every N% of file processed
         self.pgn_q = Queue()
         self.games_q = Queue()
         self.output_q = Queue()
         self.session_id = session_id
         self.reader_ps = start_reader_procs(
-            n_proc, self.games_q, self.output_q, self.print_lock, self.session_id
+            n_proc, self.games_q, self.output_q, self.session_id
         )
-        self.game_p = start_games_reader(
-            self.pgn_q, self.games_q, n_proc, self.print_lock
-        )
+        self.game_p = start_games_reader(self.pgn_q, self.games_q, n_proc)
 
     def close(self):
         self.pgn_q.put("DONE")
@@ -124,12 +123,14 @@ class ParallelParser:
                 print(e)
                 rp.kill()
 
-    def parse(self, pgn, name):
+    def parse(self, pgn, name, md_chunk=int(1e7), mv_chunk=int(1e9)):
         nbytes = os.path.getsize(pgn)
         self.pgn_q.put(pgn)
-        games = []
-        all_mvids = []
-        all_clk = []
+
+        all_elos = np.empty((md_chunk, 2), dtype="int16")
+        gamestarts = np.empty(md_chunk, dtype="int64")
+        all_moves = np.empty((mv_chunk, 2), dtype="int16")
+
         max_bp = 0
         ngames = 0
         prog = 0
@@ -137,50 +138,54 @@ class ParallelParser:
         n_finished = 0
         nmoves = 0
         start = time.time()
+        q_avg = 0
         while ngames < total_games or n_finished < self.n_proc:
+            pstart = time.time()
             code, data = self.output_q.get()
+            pend = time.time()
+            q_avg = 0.9 * q_avg + 0.1 * (pend - pstart)
+
             if code == "DONE":
                 total_games = data
                 n_finished += 1
             elif code == "ERROR":
-                self.print_lock.acquire()
-                try:
-                    print()
-                    for err in data:
-                        print(err)
-                finally:
-                    self.print_lock.release()
+                self.print("\n" + "\n".join([s for gid, s in data]))
             elif code == "INVALID":
                 ngames += 1
             elif code == "GAME":
-                pid, bytesproc, md, mvids, clk = data
+                pid, bytesproc, gameid, elos, moves = data
                 max_bp = max(max_bp, bytesproc)
+
+                if ngames >= all_elos.shape[0]:
+                    all_elos = np.concatenate(
+                        [all_elos, np.empty((int(md_chunk / 4), 2), dtype="int16")]
+                    )
+                    gamestarts = np.append(
+                        gamestarts, np.empty(int(md_chunk / 4), dtype="int64")
+                    )
+                all_elos[ngames] = elos
+                gamestarts[ngames] = nmoves
+
                 ngames += 1
 
-                md["start"] = nmoves
-                nmoves += len(mvids)
-                md["end"] = nmoves
-                games.append(md)
-                all_mvids.extend(mvids)
-                all_clk.extend(clk)
+                if nmoves + moves.shape[0] >= all_moves.shape[0]:
+                    all_moves = np.concatenate(
+                        [all_moves, np.empty((int(mv_chunk / 4), 2), dtype="int16")]
+                    )
+                all_moves[nmoves : nmoves + moves.shape[0]] = moves
+
+                nmoves += moves.shape[0]
 
                 total_games_est = ngames / (bytesproc / nbytes)
-                cur_prog = int(10 * ngames / total_games_est)
+                cur_prog = int((100 / self.print_freq) * ngames / total_games_est)
                 if cur_prog > prog:
                     prog = cur_prog
                     eta_str = get_eta(nbytes, max_bp, start)
-                    status_str = f"{name}: parsed {ngames} games ({10*prog}% done, eta: {eta_str})"
-                    self.print_lock.acquire()
-                    try:
-                        print(status_str)
-                    finally:
-                        self.print_lock.release()
-
+                    status_str = f"{name}: parsed {ngames} games ({self.print_freq*prog:.1f}% done, eta: {eta_str}), output q size: {self.output_q.qsize()} q time: {q_avg:.2e}"
+                    self.print(status_str)
             else:
                 raise Exception(f"invalid code: {code}")
-
-        all_md = {"shape": nmoves, "games": games}
-        return all_md, all_mvids, all_clk
+        return ngames, nmoves, all_elos, gamestarts, all_moves
 
 
 def main_serial(pgn_file):
