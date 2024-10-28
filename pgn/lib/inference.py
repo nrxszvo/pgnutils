@@ -438,4 +438,4 @@ def infer_mvid(mvdata, board, state, opp_state):
 
     update_state(piece, ep)
     mvid = piece.pid * 64 + sqr_to_int(mvdata["dest"])
-    return mvid
+    return int(mvid)

@@ -77,6 +77,7 @@ def process_games(games_q, output_q, pid, session_id):
                 with open(f"{session_id}_errs.txt", "a") as ferr:
                     ferr.write(f"{dbg_info}\n")
                     ferr.write(str(elos) + "\n")
+                    ferr.write(traceback.format_exc())
                     ferr.write(str(e) + "\n\n")
                 output_q.put(("INVALID", bytesproc))
 
@@ -181,7 +182,7 @@ class ParallelParser:
                 if cur_prog > prog:
                     prog = cur_prog
                     eta_str = get_eta(nbytes, max_bp, start)
-                    status_str = f"{name}: parsed {ngames} games ({self.print_freq*prog:.1f}% done, eta: {eta_str}), output q size: {self.output_q.qsize()} q time: {q_avg:.2e}"
+                    status_str = f"{name}: parsed {ngames} games ({self.print_freq*prog:.1f}% done, eta: {eta_str}), games q size: {self.games_q.qsize()} output q size: {self.output_q.qsize()} q time: {q_avg:.2e}"
                     self.print(status_str)
             else:
                 raise Exception(f"invalid code: {code}")
@@ -210,7 +211,6 @@ def main_serial(pgn_file):
         data = []
         for i, line in enumerate(fin):
             bytes_processed += len(line)
-            print(f"{100*bytes_processed/nbytes:.1f}% done... ({game} games)", end="\r")
             data.append(line)
             lineno += 1
             try:
@@ -220,8 +220,10 @@ def main_serial(pgn_file):
                 print(e)
             if code == "COMPLETE":
                 try:
-                    mvids, clk = parse_moves(processor.get_move_str())
-                    errs = validate_game(gamestart, processor.get_move_str(), mvids)
+                    moves = parse_moves(processor.get_move_str())
+                    errs = validate_game(
+                        gamestart, processor.get_move_str(), moves[:, 0]
+                    )
                     if len(errs) > 0:
                         for err in errs:
                             print(err)
@@ -233,18 +235,22 @@ def main_serial(pgn_file):
                             "BlackElo": processor.get_belo(),
                             "time": processor.get_time(),
                             "start": nmoves,
-                            "length": len(mvids),
+                            "length": moves.shape[0],
                         }
                     )
-                    nmoves += len(mvids)
-                    all_moves.extend(mvids)
-                    all_clk.extend(clk)
+                    nmoves += moves.shape[0]
+                    all_moves.extend(moves[:, 0].tolist())
+                    all_clk.extend(moves[:, 1].tolist())
                     game += 1
-                    if game % 100 == 0:
+                    if game % 1000 == 0:
                         eta_str = get_eta(nbytes, bytes_processed, start)
-                        print(f"processed {game} games (eta: {eta_str})", end="\r")
+                        print(
+                            f"processed {game} games ({100*bytes_processed/nbytes:.1f}% done, eta: {eta_str})",
+                            end="\r",
+                        )
 
                 except Exception as e:
+                    breakpoint()
                     print(e)
                     print(f"game start: {gamestart}")
 

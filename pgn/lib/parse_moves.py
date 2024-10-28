@@ -28,7 +28,7 @@ def match_next_move(move_str, idx, curmv):
 def clk_to_sec(time_str):
     m = int(time_str[2:4])
     s = int(time_str[5:7])
-    return m * 60 + s
+    return int(m * 60 + s)
 
 
 def parse_moves(move_str):
@@ -60,7 +60,10 @@ def parse_moves(move_str):
             clk.append(clk_to_sec(m.group(4)))
         curmv += 1
 
-    return np.stack([mvids, clk], axis=1, dtype="int16")
+    if len(mvids) > 0:
+        return np.stack([mvids, clk], axis=1, dtype="int16")
+    else:
+        return np.empty((0, 2), dtype="int16")
 
 
 def init_state(state={}):
