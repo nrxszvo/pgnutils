@@ -13,9 +13,10 @@ from parse_pgn import ParallelParser
 
 def collect_existing_npy(npy_dir):
     existing = []
-    if os.path.exists(f"{npy_dir}/processed.txt"):
-        with open(f"{npy_dir}/processed.txt") as f:
-            existing = [fn.rstrip() for fn in f.readlines()]
+    procfn = os.path.join(npy_dir, "processed.txt")
+    if os.path.exists(procfn):
+        with open(procfn) as f:
+            existing = [name.rstrip() for name in f.readlines()]
     return existing
 
 
@@ -46,45 +47,55 @@ def decompress(zst, pgn_fn):
 
 
 def write_npys(npy_dir, npyname, ngames, nmoves, elos, gamestarts, moves):
-    with open(f"{npy_dir}/processed.txt", "a") as f:
+    def get_fn(name):
+        return os.path.join(npy_dir, name)
+
+    with open(get_fn("processed.txt"), "a") as f:
         f.write(npyname + "\n")
 
     if nmoves == 0:
         return
 
-    mdfile = f"{npy_dir}/md.npy"
-    elofile = f"{npy_dir}/elos.npy"
-    gsfile = f"{npy_dir}/gamestarts.npy"
-    mvfile = f"{npy_dir}/moves.npy"
+    mdfile = get_fn("md.npy")
+    elofile = get_fn("elos.npy")
+    gsfile = get_fn("gamestarts.npy")
+    mvfile = get_fn("moves.npy")
 
-    if os.path.exists(mdfile):
+    exists = os.path.exists(mdfile)
+
+    if exists:
         md = np.load(mdfile, allow_pickle=True).item()
-        all_elos = np.load(elofile, allow_pickle=True)
-        all_gamestarts = np.load(gsfile, allow_pickle=True)
-        all_moves = np.load(mvfile, allow_pickle=True)
     else:
         md = {"ngames": 0, "nmoves": 0}
-        all_elos = np.empty((0, 2), dtype="int16")
-        all_gamestarts = np.empty(0, dtype="int64")
-        all_moves = np.empty((0, 2), dtype="int16")
 
+    if exists:
+        all_elos = np.load(elofile, allow_pickle=True)
+    else:
+        all_elos = np.empty((0, 2), dtype="int16")
     all_elos = np.concatenate([all_elos, elos[:ngames]])
     np.save(elofile, all_elos, allow_pickle=True)
     del all_elos
 
+    if exists:
+        all_gamestarts = np.load(gsfile, allow_pickle=True)
+    else:
+        all_gamestarts = np.empty(0, dtype="int64")
     for i in range(ngames):
         gamestarts[i] += md["nmoves"]
     all_gamestarts = np.concatenate([all_gamestarts, gamestarts[:ngames]])
     np.save(gsfile, all_gamestarts, allow_pickle=True)
     del all_gamestarts
 
+    if exists:
+        all_moves = np.load(mvfile, allow_pickle=True)
+    else:
+        all_moves = np.empty((0, 2), dtype="int16")
     all_moves = np.concatenate([all_moves, moves[:nmoves]])
     np.save(mvfile, all_moves, allow_pickle=True)
     del all_moves
 
     md["ngames"] += ngames
     md["nmoves"] += nmoves
-
     np.save(mdfile, md, allow_pickle=True)
 
 
