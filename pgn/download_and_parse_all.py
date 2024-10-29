@@ -71,8 +71,8 @@ def write_npys(npy_dir, npyname, ngames, nmoves, elos, gamestarts, moves):
     if exists:
         all_elos = np.load(elofile, allow_pickle=True)
     else:
-        all_elos = np.empty((0, 2), dtype="int16")
-    all_elos = np.concatenate([all_elos, elos[:ngames]])
+        all_elos = np.empty((2, 0), dtype="int16")
+    all_elos = np.concatenate([all_elos, elos[:, :ngames]], axis=1)
     np.save(elofile, all_elos, allow_pickle=True)
     del all_elos
 
@@ -89,8 +89,8 @@ def write_npys(npy_dir, npyname, ngames, nmoves, elos, gamestarts, moves):
     if exists:
         all_moves = np.load(mvfile, allow_pickle=True)
     else:
-        all_moves = np.empty((0, 2), dtype="int16")
-    all_moves = np.concatenate([all_moves, moves[:nmoves]])
+        all_moves = np.empty((2, 0), dtype="int16")
+    all_moves = np.concatenate([all_moves, moves[:, :nmoves]], axis=1)
     np.save(mvfile, all_moves, allow_pickle=True)
     del all_moves
 

@@ -27,10 +27,7 @@ def load_games(pgn_q, games_q, num_readers):
                     bytes_processed += len(line)
                     code = processor.process_line(line)
                     if code == "COMPLETE":
-                        elos = np.array(
-                            [processor.get_welo(), processor.get_belo()], dtype="int16"
-                        )
-                        gameid += 1
+                        elos = [processor.get_welo(), processor.get_belo()]
                         games_q.put(
                             (
                                 "GAME",
@@ -44,6 +41,7 @@ def load_games(pgn_q, games_q, num_readers):
                             )
                         )
                         gamestart = i + 1
+                        gameid += 1
 
             for _ in range(num_readers):
                 games_q.put(("FILE_DONE", gameid))
@@ -67,10 +65,10 @@ def process_games(games_q, output_q, pid, session_id):
         else:
             bytesproc, gameid, elos, move_str, dbg_info = data
             try:
-                moves = parse_moves(move_str)
-                errs = validate_game(gameid, move_str, moves[:, 0])
+                mvids, clk = parse_moves(move_str)
+                errs = validate_game(gameid, move_str, mvids)
                 if len(errs) == 0:
-                    output_q.put(("GAME", (pid, bytesproc, gameid, elos, moves)))
+                    output_q.put(("GAME", (pid, bytesproc, gameid, elos, mvids, clk)))
                 else:
                     output_q.put(("ERROR", errs))
             except Exception as e:
@@ -100,7 +98,7 @@ class ParallelParser:
     ):
         self.n_proc = n_proc
         self.print = print_safe
-        self.print_freq = 1  # print update every N% of file processed
+        self.print_freq = 10  # print update every N% of file processed
         self.pgn_q = Queue()
         self.games_q = Queue()
         self.output_q = Queue()
@@ -128,61 +126,60 @@ class ParallelParser:
         nbytes = os.path.getsize(pgn)
         self.pgn_q.put(pgn)
 
-        all_elos = np.empty((md_chunk, 2), dtype="int16")
+        all_elos = np.empty((2, md_chunk), dtype="int16")
         gamestarts = np.empty(md_chunk, dtype="int64")
-        all_moves = np.empty((mv_chunk, 2), dtype="int16")
+        all_moves = np.empty((2, mv_chunk), dtype="int16")
 
         max_bp = 0
         ngames = 0
+        gameidx = 0
         prog = 0
         total_games = float("inf")
         n_finished = 0
         nmoves = 0
         start = time.time()
-        q_avg = 0
         while ngames < total_games or n_finished < self.n_proc:
-            pstart = time.time()
             code, data = self.output_q.get()
-            pend = time.time()
-            q_avg = 0.9 * q_avg + 0.1 * (pend - pstart)
 
             if code == "DONE":
                 total_games = data
                 n_finished += 1
             elif code == "ERROR":
                 self.print("\n" + "\n".join([s for gid, s in data]))
+                ngames += 1
             elif code == "INVALID":
                 ngames += 1
             elif code == "GAME":
-                pid, bytesproc, gameid, elos, moves = data
+                pid, bytesproc, gameid, elos, mvids, clk = data
                 max_bp = max(max_bp, bytesproc)
 
-                if ngames >= all_elos.shape[0]:
+                if gameidx >= all_elos.shape[1]:
                     all_elos = np.concatenate(
-                        [all_elos, np.empty((int(md_chunk / 4), 2), dtype="int16")]
+                        [all_elos, np.empty((2, int(md_chunk / 4)), dtype="int16")]
                     )
                     gamestarts = np.append(
                         gamestarts, np.empty(int(md_chunk / 4), dtype="int64")
                     )
-                all_elos[ngames] = elos
-                gamestarts[ngames] = nmoves
+                all_elos[:, gameidx] = elos
+                gamestarts[gameidx] = nmoves
 
-                ngames += 1
-
-                if nmoves + moves.shape[0] >= all_moves.shape[0]:
+                if nmoves + len(mvids) >= all_moves.shape[1]:
                     all_moves = np.concatenate(
-                        [all_moves, np.empty((int(mv_chunk / 4), 2), dtype="int16")]
+                        [all_moves, np.empty((2, int(mv_chunk / 4)), dtype="int16")]
                     )
-                all_moves[nmoves : nmoves + moves.shape[0]] = moves
+                all_moves[0, nmoves : nmoves + len(mvids)] = mvids
+                all_moves[1, nmoves : nmoves + len(mvids)] = clk
 
-                nmoves += moves.shape[0]
+                nmoves += len(mvids)
+                ngames += 1
+                gameidx += 1
 
                 total_games_est = ngames / (bytesproc / nbytes)
                 cur_prog = int((100 / self.print_freq) * ngames / total_games_est)
                 if cur_prog > prog:
                     prog = cur_prog
                     eta_str = get_eta(nbytes, max_bp, start)
-                    status_str = f"{name}: parsed {ngames} games ({self.print_freq*prog:.1f}% done, eta: {eta_str}), games q size: {self.games_q.qsize()} output q size: {self.output_q.qsize()} q time: {q_avg:.2e}"
+                    status_str = f"{name}: parsed {ngames} games ({self.print_freq*prog}% done, eta: {eta_str})"
                     self.print(status_str)
             else:
                 raise Exception(f"invalid code: {code}")

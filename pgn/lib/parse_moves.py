@@ -1,6 +1,5 @@
 from . import inference as inf
 import re
-import numpy as np
 
 MV_PAT = "O-O-O|O-O|[a-hRNBQK]+[0-9=x]*[a-hRNBQK]*[0-9]*[=RNBQ]*"
 CLK_PAT = "\{.*\[%clk ([0-9:]+)\].*\}"
@@ -28,7 +27,7 @@ def match_next_move(move_str, idx, curmv):
 def clk_to_sec(time_str):
     m = int(time_str[2:4])
     s = int(time_str[5:7])
-    return int(m * 60 + s)
+    return m * 60 + s
 
 
 def parse_moves(move_str):
@@ -60,10 +59,7 @@ def parse_moves(move_str):
             clk.append(clk_to_sec(m.group(4)))
         curmv += 1
 
-    if len(mvids) > 0:
-        return np.stack([mvids, clk], axis=1, dtype="int16")
-    else:
-        return np.empty((0, 2), dtype="int16")
+    return mvids, clk
 
 
 def init_state(state={}):
