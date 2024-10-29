@@ -155,7 +155,11 @@ class ParallelParser:
 
                 if gameidx >= all_elos.shape[1]:
                     all_elos = np.concatenate(
-                        [all_elos, np.empty((2, int(md_chunk / 4)), dtype="int16")]
+                        [
+                            all_elos,
+                            np.empty((2, int(md_chunk / 4)), dtype="int16"),
+                        ],
+                        axis=1,
                     )
                     gamestarts = np.append(
                         gamestarts, np.empty(int(md_chunk / 4), dtype="int64")
@@ -165,7 +169,11 @@ class ParallelParser:
 
                 if nmoves + len(mvids) >= all_moves.shape[1]:
                     all_moves = np.concatenate(
-                        [all_moves, np.empty((2, int(mv_chunk / 4)), dtype="int16")]
+                        [
+                            all_moves,
+                            np.empty((2, int(mv_chunk / 4)), dtype="int16"),
+                        ],
+                        axis=1,
                     )
                 all_moves[0, nmoves : nmoves + len(mvids)] = mvids
                 all_moves[1, nmoves : nmoves + len(mvids)] = clk
