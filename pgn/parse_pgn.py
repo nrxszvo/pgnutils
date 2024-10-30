@@ -212,6 +212,10 @@ def main_serial(pgn_file):
     start = time.time()
     nmoves = 0
     processor = PgnProcessor()
+    avg = 0
+    mnm_avg = 0
+    iid_avg = 0
+    re_avg = 0
     while True:
         data = []
         for i, line in enumerate(fin):
@@ -225,27 +229,32 @@ def main_serial(pgn_file):
                 print(e)
             if code == "COMPLETE":
                 try:
-                    moves = parse_moves(processor.get_move_str())
-                    errs = validate_game(
-                        gamestart, processor.get_move_str(), moves[:, 0]
+                    ts = time.time()
+                    mvids, clk, mnm_s, iid_s, re_s = parse_moves(
+                        processor.get_move_str()
                     )
+                    te = time.time()
+                    avg = 0.9 * avg + 0.1 * (te - ts)
+                    mnm_avg = 0.9 * mnm_avg + 0.1 * mnm_s
+                    iid_avg = 0.9 * iid_avg + 0.1 * iid_s
+                    re_avg = 0.9 * re_avg + 0.1 * re_s
+                    errs = validate_game(gamestart, processor.get_move_str(), mvids)
                     if len(errs) > 0:
                         for err in errs:
                             print(err)
                         raise Exception("evaluation failed")
-
                     md["games"].append(
                         {
                             "WhiteElo": processor.get_welo(),
                             "BlackElo": processor.get_belo(),
                             "time": processor.get_time(),
                             "start": nmoves,
-                            "length": moves.shape[0],
+                            "length": len(mvids),
                         }
                     )
-                    nmoves += moves.shape[0]
-                    all_moves.extend(moves[:, 0].tolist())
-                    all_clk.extend(moves[:, 1].tolist())
+                    nmoves += len(mvids)
+                    all_moves.extend(mvids)
+                    all_clk.extend(clk)
                     game += 1
                     if game % 1000 == 0:
                         eta_str = get_eta(nbytes, bytes_processed, start)
@@ -253,7 +262,6 @@ def main_serial(pgn_file):
                             f"processed {game} games ({100*bytes_processed/nbytes:.1f}% done, eta: {eta_str})",
                             end="\r",
                         )
-
                 except Exception as e:
                     breakpoint()
                     print(e)
@@ -269,6 +277,15 @@ def main_serial(pgn_file):
 
         fin.close()
 
+    end = time.time()
+    minutes = int((end - start) / 60)
+    sec = int((end - start) % 60)
+    print()
+    print(f"total time: {minutes}:{sec:02}")
+    print(f"average parseMoves ms: {1000*avg:.2f}")
+    print(f"avarge matchNextMove ms: {1000*mnm_avg:.2f}")
+    print(f"average inferId ms: {1000*iid_avg:.2f}")
+    print(f"average regex ms: {1000*re_avg:.2f}")
     return md, all_moves, all_clk
 
 

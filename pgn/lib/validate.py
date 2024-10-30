@@ -77,7 +77,7 @@ def validate_game(gameid, move_str, mvids):
     results = []
     while mv_idx < len(move_str):
         try:
-            mv_idx, m = match_next_move(move_str, mv_idx, curmv)
+            mv_idx, m, _ = match_next_move(move_str, mv_idx, curmv)
             if mv_idx == len(move_str):
                 break
             for mv in m.groups()[::2]:
