@@ -76,7 +76,7 @@ bool compareMoves(string& mv, string& pfr) {
 	}
 }
 
-vector<pair<int, string> > validateGame(int gameid, string moveStr, vector<int>& mvids) {
+vector<pair<int, string> > validateGame(int gameid, string moveStr, vector<int16_t>& mvids) {
 	vector<pair<int,string> > results;
 	int curmv = 1;
 	int mvIdx = 0;
@@ -84,7 +84,7 @@ vector<pair<int, string> > validateGame(int gameid, string moveStr, vector<int>&
 	vector<string> matches;
 	long re_ns;
 	while (mvIdx < moveStr.size()) {
-		tie(mvIdx, matches, re_ns) = matchNextMove(moveStr, mvIdx, curmv); 
+		tie(mvIdx, matches) = matchNextMove(moveStr, mvIdx, curmv); 
 		if (mvIdx == moveStr.size() && matches.size() == 0) {
 			break;
 		}

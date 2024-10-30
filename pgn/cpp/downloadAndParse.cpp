@@ -1,43 +1,49 @@
 #include <string>
 #include <iostream>
 #include <fstream>
-#include <ctime>
-#include <chrono>
-
+#include "npy.hpp"
 #include "parseMoves.h"
 #include "validate.h"
 
+#include "profiler.h"
+
 int main() {
-	using nano = std::chrono::nanoseconds;
 	PgnProcessor processor;
 	std::ifstream infile("../../test.pgn");
 	std::string line;
 	int gamestart = 0;
 	int lineno = 0;
-	std::vector<int> welos;
-	std::vector<int> belos;
-	std::vector<long> gamestarts;
-	std::vector<std::vector<int> > mvids;
-	std::vector<std::vector<int> > clktimes;
-	long nmoves = 0;
+	std::vector<int16_t> welos;
+	std::vector<int16_t> belos;
+	std::vector<int64_t> gamestarts;
+	std::vector<int16_t> mvids;
+	std::vector<int16_t> clktimes;
+	
+	int64_t nmoves = 0;
 
-	float avg_ms = 0;
-	float avg_mnm_ms = 0;
-	float avg_iid_ms = 0;
-	float avg_re_ms = 0;
-	auto start = std::chrono::high_resolution_clock::now();
+	std::string toAvg[] = {
+		"parseMoves",
+		"matchNextMove",
+		"inferId",
+		"regex"
+	};
+
+	for (auto name: toAvg) {
+		profiler.init(name);
+	}
+	profiler.init("main", 1);
+	profiler.start("main");
+
 	while (std::getline(infile, line)) {
 		lineno++;
 		std::string code = processor.processLine(line);		
 		if (code == "COMPLETE") {
-			auto ps = std::chrono::high_resolution_clock::now();
-			auto [moves, clk, mnm_ns, iid_ns, re_ns] = parseMoves(processor.getMoveStr());
-			auto pe = std::chrono::high_resolution_clock::now();
-			int total_ns = std::chrono::duration_cast<nano>(pe-ps).count();
-			avg_ms = 0.9*avg_ms + 0.0000001*total_ns;
-			avg_mnm_ms = 0.9*avg_mnm_ms + 0.0000001*mnm_ns;
-			avg_iid_ms = 0.9*avg_iid_ms + 0.0000001*iid_ns;
-			avg_re_ms = 0.9*avg_re_ms + 0.0000001*re_ns;
+			profiler.start("parseMoves");
+			auto [moves, clk] = parseMoves(processor.getMoveStr());
+			profiler.stop("parseMoves");
+			for (auto name: toAvg) {
+				profiler.average(name);
+			}
 			auto errs = validateGame(gamestart, processor.getMoveStr(), moves);
 			if (errs.size() > 0) {
 				for (auto [gameid, err]: errs) {
@@ -45,11 +51,11 @@ int main() {
 				}
 				throw std::runtime_error("evaluation failed");
 			}
-			welos.push_back(processor.getWelo());
-			belos.push_back(processor.getBelo());
+			welos.push_back((short)processor.getWelo());
+			belos.push_back((short)processor.getBelo());
 			gamestarts.push_back(nmoves);
-			mvids.push_back(moves);
-			clktimes.push_back(clk);
+			mvids.insert(mvids.end(), moves.begin(), moves.end());
+			clktimes.insert(clktimes.end(), clk.begin(), clk.end());
 
 			if (gamestarts.size() % 1000 == 0) {
 				std::cout << "processed " << std::to_string(gamestarts.size()) << " games\r" << std::flush;
@@ -57,17 +63,32 @@ int main() {
 			gamestart = lineno+1;
 		}
 	}
-	auto end = std::chrono::high_resolution_clock::now();
-	long total_ns = std::chrono::duration_cast<nano>(end-start).count();
-	int total_s = int(total_ns/1e9);
-	int min = total_s/60;
-	size_t nzero = 2;
-	auto sec = std::to_string(total_s % 60);
-	auto seczp = std::string(nzero - std::min(nzero, sec.size()), '0') + sec;
-	std::cout << std::endl << min << ":" << seczp << " to process" << std::endl;
-	std::cout << "average parseMoves ms: " << avg_ms << std::endl;
-	std::cout << "average matchNextMove ms: " << avg_mnm_ms << std::endl;
-	std::cout << "average inferId ms: " << avg_iid_ms << std::endl;
-	std::cout << "average regex ms: " << avg_re_ms << std::endl;
+
+	profiler.stop("main");
+	std::cout << std::endl;
+	profiler.report();
+
+	std::vector<int16_t> elos(welos.size() + belos.size());
+	elos.insert(elos.begin(), welos.begin(), welos.end());
+	elos.insert(elos.begin() + welos.size(), belos.begin(), belos.end());
+	
+	std::vector<int16_t> moves(2 * mvids.size());
+	moves.insert(moves.begin(), mvids.begin(), mvids.end());
+	moves.insert(moves.begin() + mvids.size(), clktimes.begin(), clktimes.end());
+	
+	npy::npy_data_ptr<int16_t> elo_ptr;
+	npy::npy_data_ptr<int64_t> gs_ptr; 
+	npy::npy_data_ptr<int16_t> mv_ptr;
+	
+	elo_ptr.data_ptr = elos.data(); 	
+	elo_ptr.shape = { 2, welos.size() };
+	gs_ptr.data_ptr = gamestarts.data();
+	mv_ptr.data_ptr = moves.data();
+	mv_ptr.shape = { 2, mvids.size() };
+
+	npy::write_npy("elos.npy", elo_ptr);
+	npy::write_npy("gamestarts.npy", gs_ptr);
+	npy::write_npy("moves.npy", mv_ptr);
+
 	return 0;
 }

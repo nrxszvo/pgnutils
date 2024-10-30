@@ -1,0 +1,3 @@
+[submodule "pgn/cpp/libnpy"]
+	path = pgn/cpp/libnpy
+	url = git@github.com:llohse/libnpy.git

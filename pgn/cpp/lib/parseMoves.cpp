@@ -2,12 +2,11 @@
 #include <algorithm>
 #include <vector>
 #include <string>
-#include <chrono>
-#include <regex>
 #include <re2/re2.h>
 #include <tuple>
 #include "parseMoves.h"
 #include "inference.h"
+#include "../profiler.h"
 
 using namespace std;
 
@@ -20,7 +19,7 @@ string movenoToStr(int moveno) {
 	return to_string(moveno) + ". ";
 }
 
-tuple<int, vector<string>, long> matchNextMove(string& moveStr, int idx, int curmv) {
+tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv) {
 	int mvstart = idx;
 	string nextmv = movenoToStr(curmv+1);
 	while(idx < moveStr.size() && moveStr.substr(idx, nextmv.size()) != nextmv) {
@@ -28,56 +27,51 @@ tuple<int, vector<string>, long> matchNextMove(string& moveStr, int idx, int cur
 	}
 	string wm, wclk, bm, bclk;
 	string ss = moveStr.substr(mvstart, idx-mvstart);
-	auto ps = chrono::high_resolution_clock::now();
+
+	profiler.start("regex");
 	bool found2 = re2::RE2::PartialMatch(ss, twoMoves, &wm, &wclk, &bm, &bclk);
 	if (!found2) {
 		bool found1 = re2::RE2::PartialMatch(ss, oneMove, &wm, &wclk);
 		if (!found1) throw runtime_error("matchNextMove failed");
 	}
-	auto pe = chrono::high_resolution_clock::now();
-	long total_ns = chrono::duration_cast<chrono::nanoseconds>(pe-ps).count();
+	profiler.stop("regex");
+
 	vector<string> matches;
 	if (found2) {
 		matches = {wm, wclk, bm, bclk};
 	} else {
 		matches = {wm, wclk};
 	}
-	return make_tuple(idx, matches, total_ns);
+	return make_tuple(idx, matches);
 }
 
 int clkToSec(string timeStr) {
 	int m = stoi(timeStr.substr(2, 2));
 	int s = stoi(timeStr.substr(5, 2));
-	return m * 60 + s;
+	return (int16_t)(m * 60 + s);
 }
 
 
-tuple<vector<int>, vector<int>, int, int, long > parseMoves(string moveStr) {
-	vector<int> mvids;
-	vector<int> clk;
+tuple<vector<int16_t>, vector<int16_t> > parseMoves(string moveStr) {
+	vector<int16_t> mvids;
+	vector<int16_t> clk;
 	int curmv = 1;
 	int idx = 0;
 	vector<string> matches;
 	MoveParser parser;
-	int mnm_ns = 0;
-	int iid_ns = 0;
-	long regex_ns;
-	long total_re_ns = 0;
+	
 	while (idx < moveStr.size()) {
-		auto ps = chrono::high_resolution_clock::now();
-		tie(idx, matches, regex_ns) = matchNextMove(moveStr, idx, curmv);
-		auto pe = chrono::high_resolution_clock::now();
-		mnm_ns += chrono::duration_cast<chrono::nanoseconds>(pe-ps).count();
-		total_re_ns += regex_ns;
+		profiler.start("matchNextMove");
+		tie(idx, matches) = matchNextMove(moveStr, idx, curmv);
+		profiler.stop("matchNextMove");
 
 		if (idx == moveStr.size() && matches.size() == 0) {
 			break;
 		}
 		string wm = matches[0];
-		auto is = chrono::high_resolution_clock::now();
+		profiler.start("inferId");
 		mvids.push_back(parser.inferId(wm));
-		auto ie = chrono::high_resolution_clock::now();
-		iid_ns += chrono::duration_cast<chrono::nanoseconds>(ie-is).count();
+		profiler.stop("inferId");
 
 		clk.push_back(clkToSec(matches[1]));
 		if (matches.size() == 4) {
@@ -87,7 +81,7 @@ tuple<vector<int>, vector<int>, int, int, long > parseMoves(string moveStr) {
 		}
 		curmv++;
 	}
-	return make_tuple(mvids, clk, mnm_ns, iid_ns, total_re_ns);
+	return make_tuple(mvids, clk);
 }
 
 const string TERM_PATS[] = {

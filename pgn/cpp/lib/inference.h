@@ -45,7 +45,7 @@ struct Piece {
 class MoveParser {
 public:
 	MoveParser(); 
-	int inferId(std::string& mv);
+	int16_t inferId(std::string& mv);
 private:
 	std::vector<std::vector<Piece*> > board;
 	std::vector<Piece *> white;

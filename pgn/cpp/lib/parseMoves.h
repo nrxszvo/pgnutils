@@ -2,7 +2,7 @@
 #include <vector>
 #include <tuple>
 
-std::tuple<int, std::vector<std::string>, long > matchNextMove(std::string& moveStr, int idx, int curmv);
+std::tuple<int, std::vector<std::string> > matchNextMove(std::string& moveStr, int idx, int curmv);
 
 struct State {
 	std::string weloStr;
@@ -24,7 +24,7 @@ struct State {
 	};
 };
 
-std::tuple<std::vector<int>, std::vector<int>, int, int, long > parseMoves(std::string moveStr);
+std::tuple<std::vector<int16_t>, std::vector<int16_t> > parseMoves(std::string moveStr);
 
 class PgnProcessor {
 public:

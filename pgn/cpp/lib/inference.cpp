@@ -373,7 +373,7 @@ bool genericInferenceMatch(Piece *piece, MoveState& mvdata, vector<vector<Piece*
 	return board[piece->rank][piece->file] == piece && piece->name == mvdata.piece && legalMove(piece, board, mvdata.dest);
 }
 
-int inferMvid(MoveState& mvdata, vector<vector<Piece*> >& board, vector<Piece*>& state, vector<Piece*> oppState) {
+int16_t inferMvid(MoveState& mvdata, vector<vector<Piece*> >& board, vector<Piece*>& state, vector<Piece*> oppState) {
 	if (mvdata.castle != "") {
 		return castleToMvid(mvdata, board, state);
 	}
@@ -451,7 +451,7 @@ int inferMvid(MoveState& mvdata, vector<vector<Piece*> >& board, vector<Piece*>&
 	}
 	updateState(piece, mvdata.enpassant);
 	int mvid = piece->pid * 64 + cellToInt(mvdata.dest);
-	return mvid;
+	return (int16_t)mvid;
 }
 
 MoveParser::MoveParser() {
@@ -461,7 +461,7 @@ MoveParser::MoveParser() {
 }
 
 
-int MoveParser::inferId(string& mv) {
+int16_t MoveParser::inferId(string& mv) {
 	MoveState mvdata = parseMove(mv, this->prevMv, this->color);
 	vector<Piece*> state, other;
 	if (this->color == COLORW) {
