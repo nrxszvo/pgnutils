@@ -4,6 +4,7 @@ import time
 import datetime
 import traceback
 from multiprocessing import Process, Queue
+import builtins
 
 import numpy as np
 
@@ -194,6 +195,33 @@ class ParallelParser:
         return ngames, nmoves, all_elos, gamestarts, all_moves
 
 
+class Block:
+    def __init__(self):
+        self.start = 0
+        self.count = 0
+        self.total = 0
+
+
+class Prof:
+    def __init__(self, names):
+        self.names = names
+        self.blocks = {}
+        for name in self.names:
+            self.blocks[name] = Block()
+
+    def start(self, name):
+        self.blocks[name].start = time.time()
+
+    def stop(self, name):
+        blk = self.blocks[name]
+        blk.total += time.time() - blk.start
+        blk.count += 1
+
+    def get_average(self, name):
+        blk = self.blocks[name]
+        return blk.total / blk.count
+
+
 def main_serial(pgn_file):
     # for debugging
     lineno = 0
@@ -212,10 +240,10 @@ def main_serial(pgn_file):
     start = time.time()
     nmoves = 0
     processor = PgnProcessor()
-    avg = 0
-    mnm_avg = 0
-    iid_avg = 0
-    re_avg = 0
+
+    prof = Prof(["parse_moves", "match_next_move", "infer_id", "regex"])
+    builtins.prof = prof
+
     while True:
         data = []
         for i, line in enumerate(fin):
@@ -229,15 +257,9 @@ def main_serial(pgn_file):
                 print(e)
             if code == "COMPLETE":
                 try:
-                    ts = time.time()
-                    mvids, clk, mnm_s, iid_s, re_s = parse_moves(
-                        processor.get_move_str()
-                    )
-                    te = time.time()
-                    avg = 0.9 * avg + 0.1 * (te - ts)
-                    mnm_avg = 0.9 * mnm_avg + 0.1 * mnm_s
-                    iid_avg = 0.9 * iid_avg + 0.1 * iid_s
-                    re_avg = 0.9 * re_avg + 0.1 * re_s
+                    prof.start("parse_moves")
+                    mvids, clk = parse_moves(processor.get_move_str())
+                    prof.stop("parse_moves")
                     errs = validate_game(gamestart, processor.get_move_str(), mvids)
                     if len(errs) > 0:
                         for err in errs:
@@ -282,10 +304,8 @@ def main_serial(pgn_file):
     sec = int((end - start) % 60)
     print()
     print(f"total time: {minutes}:{sec:02}")
-    print(f"average parseMoves ms: {1000*avg:.2f}")
-    print(f"avarge matchNextMove ms: {1000*mnm_avg:.2f}")
-    print(f"average inferId ms: {1000*iid_avg:.2f}")
-    print(f"average regex ms: {1000*re_avg:.2f}")
+    for name in prof.blocks:
+        print(f"{name} average ms: {1000*prof.get_average(name):.4f}")
     return md, all_moves, all_clk
 
 

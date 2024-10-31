@@ -1,6 +1,6 @@
 from . import inference as inf
 import re
-import time
+import builtins
 
 MV_PAT = "O-O-O|O-O|[a-hRNBQK]+[0-9=x]*[a-hRNBQK]*[0-9]*[=RNBQ]*"
 CLK_PAT = "\{.*\[%clk ([0-9:]+)\].*\}"
@@ -15,15 +15,16 @@ def match_next_move(move_str, idx, curmv):
     nextmv = moveno_str(curmv + 1)
     while idx < len(move_str) and move_str[idx : idx + len(nextmv)] != nextmv:
         idx += 1
-    ps = time.time()
+
+    builtins.prof.start("regex")
     m = re.match(
         f"{curmv}\..* ({MV_PAT}).*{CLK_PAT}.* ({MV_PAT}).*{CLK_PAT}",
         move_str[mvstart:idx],
     )
     if m is None:
         m = re.match(f"{curmv}\..* ({MV_PAT}).*{CLK_PAT}", move_str[mvstart:idx])
-    pe = time.time()
-    return idx, m, (pe - ps)
+    builtins.prof.stop("regex")
+    return idx, m
 
 
 def clk_to_sec(time_str):
@@ -39,15 +40,10 @@ def parse_moves(move_str):
     bm = None
     curmv = 1
     idx = 0
-    mnm_ms = 0
-    iid_ms = 0
-    re_tot = 0
     while idx < len(move_str):
-        ps = time.time()
-        idx, m, re_s = match_next_move(move_str, idx, curmv)
-        pe = time.time()
-        mnm_ms += pe - ps
-        re_tot += re_s
+        builtins.prof.start("match_next_move")
+        idx, m = match_next_move(move_str, idx, curmv)
+        builtins.prof.stop("match_next_move")
 
         if idx == len(move_str) and m is None:
             break
@@ -55,11 +51,10 @@ def parse_moves(move_str):
             raise Exception("clock field missing")
 
         wm = m.group(1)
-        ps = time.time()
+        builtins.prof.start("infer_id")
         mvdata = inf.parse_move(wm, bm, inf.COLORW)
         mvid = inf.infer_mvid(mvdata, board, white, black)
-        pe = time.time()
-        iid_ms += pe - ps
+        builtins.prof.stop("infer_id")
         mvids.append(mvid)
         clk.append(clk_to_sec(m.group(2)))
 
@@ -71,7 +66,7 @@ def parse_moves(move_str):
             clk.append(clk_to_sec(m.group(4)))
         curmv += 1
 
-    return mvids, clk, mnm_ms, iid_ms, re_tot
+    return mvids, clk
 
 
 def init_state(state={}):
