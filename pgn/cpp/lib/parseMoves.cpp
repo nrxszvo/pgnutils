@@ -29,17 +29,17 @@ tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv) {
 	string ss = moveStr.substr(mvstart, idx-mvstart);
 
 	profiler.start("regex");
+	bool found1;
 	bool found2 = re2::RE2::PartialMatch(ss, twoMoves, &wm, &wclk, &bm, &bclk);
 	if (!found2) {
-		bool found1 = re2::RE2::PartialMatch(ss, oneMove, &wm, &wclk);
-		if (!found1) throw runtime_error("matchNextMove failed");
+		found1 = re2::RE2::PartialMatch(ss, oneMove, &wm, &wclk);
 	}
 	profiler.stop("regex");
 
 	vector<string> matches;
 	if (found2) {
 		matches = {wm, wclk, bm, bclk};
-	} else {
+	} else if (found1) {
 		matches = {wm, wclk};
 	}
 	return make_tuple(idx, matches);

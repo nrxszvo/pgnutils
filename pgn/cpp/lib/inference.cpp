@@ -1,6 +1,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <stdexcept>
 #include "inference.h"
 
 using namespace std;

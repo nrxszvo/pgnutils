@@ -3,6 +3,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <string>
+#include <vector>
 
 struct Block {
 	float avg;
@@ -54,11 +55,8 @@ public:
 			} else {
 				float total_s = block.total_nano/1e9;
 				int min = int(total_s/60);
-				size_t nzero = 2;
 				auto sec = total_s - 60*min;
-				auto secfmt = std::format("{:.2f}", sec); 
-				auto seczp = std::string(nzero - std::min(nzero, std::to_string(int(sec)).size()), '0') + secfmt;
-				val = std::to_string(min) + ":" + seczp + " total processing time";
+				val = std::to_string(min) + "m " + std::to_string(sec);
 			}
 			std::cout << name << ": " << val << std::endl;
 		}

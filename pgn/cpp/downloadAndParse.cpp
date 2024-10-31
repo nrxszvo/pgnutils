@@ -1,15 +1,31 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <chrono>
 #include "npy.hpp"
 #include "parseMoves.h"
 #include "validate.h"
 
 #include "profiler.h"
 
+/*
+std::string getEta(int total, int soFar, std::chrono::time_point<std::chrono::high_resolution_clock> &start) {	
+	if (soFar == 0) {
+		return "tbd";
+	}
+	auto stop = std::chrono::high_resolution_clock::now();
+	long ellapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(stop-start).count();
+	long remaining = (total-soFar) * ellapsed / soFar;
+	int hrs = remaining / 1e9 / 3600;
+	int minutes = ((remaining / 1e9) % 3600) / 60;
+	int secs = (remaining / 1e9) % 60;
+	return std::to_string(hrs) + "h" + std::to_string(minutes) + "m" + std::to_string(secs);
+}
+*/
+
 int main() {
 	PgnProcessor processor;
-	std::ifstream infile("../../test.pgn");
+	std::ifstream infile("../../lichess_db_standard_rated_2023-09.pgn");
 	std::string line;
 	int gamestart = 0;
 	int lineno = 0;

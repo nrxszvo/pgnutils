@@ -12,10 +12,10 @@ find_package(re2 REQUIRED)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
-set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 add_subdirectory(lib)
-target_link_libraries(downloadAndParse PRIVATE re2::re2)
+
 target_link_libraries(downloadAndParse PUBLIC PgnParser)
+target_link_libraries(downloadAndParse PRIVATE re2::re2)
 target_include_directories(downloadAndParse PUBLIC "${PROJECT_SOURCE_DIR}/lib")
 target_include_directories(downloadAndParse PUBLIC "${PROJECT_SOURCE_DIR}/libnpy/include")
 
