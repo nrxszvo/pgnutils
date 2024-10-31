@@ -6,12 +6,12 @@
 #include <vector>
 
 struct Block {
-	float avg;
 	std::chrono::time_point<std::chrono::high_resolution_clock> start;
 	long total_nano;
+	int count;
 	int reportFmt;
-	Block(): avg(0.0f), total_nano(0), reportFmt(0) {};
-	Block(int reportFmt): avg(0.0f), total_nano(0), reportFmt(reportFmt) {};
+	Block(): total_nano(0), count(0), reportFmt(0) {};
+	Block(int reportFmt): total_nano(0), count(0), reportFmt(reportFmt) {};
 };
 
 #ifdef PROFILE_ENABLE
@@ -29,34 +29,34 @@ public:
 		this->blocks[name].start = std::chrono::high_resolution_clock::now();	
 	}
 	inline void stop(std::string name) {
+		Block& block = this->blocks[name];
 		auto stop = std::chrono::high_resolution_clock::now();
-		auto start = this->blocks[name].start;
+		auto start = block.start;
 		long nano = std::chrono::duration_cast<std::chrono::nanoseconds>(stop-start).count();
-		this->blocks[name].total_nano += nano;
+		block.total_nano += nano;
+		block.count++;
 	}	
 	long getNano(std::string name) {
 		return this->blocks[name].total_nano;
 	}
 
-	inline void average(std::string name) {
-		Block& block = this->blocks[name];
-		block.avg = this->alpha*block.avg + (1-this->alpha)*block.total_nano/1e6;	
+	float getAverage(Block& block) {
+		float avg = (float)block.total_nano/1e6/block.count;
 		block.total_nano = 0;
-	}
-	float getAverage(std::string name) {
-		return this->blocks[name].avg;
+		block.count = 0;
+		return avg;
 	}
 	void report() {
 		for (auto& name: this->names) {
 			Block& block = this->blocks[name];
 			std::string val;
 			if (block.reportFmt == 0) {
-				val = std::to_string(block.avg) + " ms";
+				val = std::to_string(getAverage(block)) + " ms";
 			} else {
 				float total_s = block.total_nano/1e9;
 				int min = int(total_s/60);
 				auto sec = total_s - 60*min;
-				val = std::to_string(min) + "m " + std::to_string(sec);
+				val = std::to_string(min) + "m" + std::to_string(sec) + "s";
 			}
 			std::cout << name << ": " << val << std::endl;
 		}
@@ -72,9 +72,6 @@ public:
 		return;
 	}
 	inline void stop(std::string name) {
-		return;
-	}
-	inline void average(std::string name) {
 		return;
 	}
 	long getNano(std::string name) {

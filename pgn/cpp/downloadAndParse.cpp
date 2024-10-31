@@ -25,7 +25,7 @@ std::string getEta(int total, int soFar, std::chrono::time_point<std::chrono::hi
 
 int main() {
 	PgnProcessor processor;
-	std::ifstream infile("../../lichess_db_standard_rated_2023-09.pgn");
+	std::ifstream infile("../../test.pgn");
 	std::string line;
 	int gamestart = 0;
 	int lineno = 0;
@@ -36,17 +36,10 @@ int main() {
 	std::vector<int16_t> clktimes;
 	
 	int64_t nmoves = 0;
-
-	std::string toAvg[] = {
-		"parseMoves",
-		"matchNextMove",
-		"inferId",
-		"regex"
-	};
-
-	for (auto name: toAvg) {
-		profiler.init(name);
-	}
+	profiler.init("parseMoves");
+	profiler.init("matchNextMove");
+	profiler.init("inferId");
+	profiler.init("regex");
 	profiler.init("main", 1);
 	profiler.start("main");
 
@@ -57,9 +50,6 @@ int main() {
 			profiler.start("parseMoves");
 			auto [moves, clk] = parseMoves(processor.getMoveStr());
 			profiler.stop("parseMoves");
-			for (auto name: toAvg) {
-				profiler.average(name);
-			}
 			auto errs = validateGame(gamestart, processor.getMoveStr(), moves);
 			if (errs.size() > 0) {
 				for (auto [gameid, err]: errs) {
