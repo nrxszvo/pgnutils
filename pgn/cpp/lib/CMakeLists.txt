@@ -1,4 +1,5 @@
-add_library(PgnParser parseMoves.cpp inference.cpp validate.cpp utils.cpp)
+add_library(PgnParser parseMoves.cpp inference.cpp validate.cpp utils.cpp decompress.cpp)
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	target_include_directories(PgnParser PUBLIC /opt/homebrew/include)
+	target_include_directories(PgnParser PUBLIC /opt/homebrew/Cellar/zstd/1.5.6/include)
 endif()

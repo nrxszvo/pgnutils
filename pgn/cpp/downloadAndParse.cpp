@@ -9,6 +9,7 @@
 #include "validate.h"
 #include "profiler.h"
 #include "utils.h"
+#include "decompress.h"
 
 namespace fs = std::filesystem;
 

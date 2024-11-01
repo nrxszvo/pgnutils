@@ -1,4 +1,5 @@
 #include "parallelParser.h"
+#include "decompress.h"
 #include "parseMoves.h"
 #include "validate.h"
 #include "utils.h"
@@ -29,6 +30,66 @@ struct GameState {
 
 };
 
+void loadGamesZst(GameState gs, int nReaders) {
+	while(true) {
+		std::string zst;
+		{
+			std::unique_lock<std::mutex> lock(*gs.pgnMtx);
+			gs.pgnCv->wait(lock, [&] { return !gs.pgnQ->empty(); });
+			zst = gs.pgnQ->front();
+			gs.pgnQ->pop();
+			lock.unlock();
+		}
+		if (zst == "DONE") {
+			{
+				std::lock_guard<std::mutex> lock(*gs.gamesMtx);
+				for (int i=0; i<nReaders; i++) {
+					gs.gamesQ->push(std::make_shared<GameData>("SESSION_DONE"));
+				}
+			}
+			gs.gamesCv->notify_all();
+			break;
+		} else {
+			uintmax_t bytesProcessed = 0;
+			int gameId = 0;
+			int gamestart = 0;
+			int lineno = 0;
+			PgnProcessor processor;
+			DecompressStream decompressor(zst);
+			while(decompressor.decompressFrame() != 0) {
+				std::vector<std::string> lines = decompressor.getOutput();
+				bytesProcessed += decompressor.getFrameSize();
+				for (auto line: lines) {
+					lineno++;
+					std::string code = processor.processLine(line);
+					if (code == "COMPLETE") {
+						{
+							std::lock_guard<std::mutex> lock(*gs.gamesMtx);
+							gs.gamesQ->push(std::make_shared<GameData>(
+									bytesProcessed, 
+									gameId, 
+									processor.getWelo(), 
+									processor.getBelo(), 
+									processor.getMoveStr(),
+									zst + ":" + std::to_string(gamestart)
+								));
+						}
+						gs.gamesCv->notify_one();
+						gamestart = lineno + 1;
+						gameId++;
+					}
+				}
+			}	
+			{
+				std::lock_guard<std::mutex> lock(*gs.gamesMtx);
+				for (int i=0; i<nReaders; i++) {
+					gs.gamesQ->push(std::make_shared<GameData>("FILE_DONE", gameId));
+				}
+			}
+			gs.gamesCv->notify_all();
+		}
+	}
+}
 
 void loadGames(GameState gs, int nReaders) {
 	while(true) {
@@ -98,7 +159,7 @@ std::shared_ptr<std::thread> startGamesReader(
 	   	std::condition_variable& gamesCv,
 	   	int nReaders) {
 	GameState gs(&pgnQ, &gamesQ, &pgnMtx, &gamesMtx, &pgnCv, &gamesCv);
-	return std::make_shared<std::thread>(loadGames, gs, nReaders);
+	return std::make_shared<std::thread>(loadGamesZst, gs, nReaders);
 }
 
 struct ReaderState {
@@ -267,7 +328,7 @@ Result ParallelParser::parse(std::string pgn, std::string name) {
 			int curProg = int((100.0f / printFreq) * ngames / totalGamesEst);
 			if (curProg > progress) {
 				progress = curProg;
-				std::string eta = getEta(nbytes, maxBytes, start);
+				std::string eta = getEta(totalGamesEst, ngames, start);
 				std::string status = name + ": parsed " + std::to_string(ngames) + \
 									 " games (" + std::to_string(printFreq*progress) + \
 									 "% done, eta: " + eta + ")";
