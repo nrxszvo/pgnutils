@@ -1,3 +1,6 @@
 [submodule "pgn/cpp/libnpy"]
 	path = pgn/cpp/libnpy
 	url = git@github.com:llohse/libnpy.git
+[submodule "pgn/zstd"]
+	path = pgn/cpp/zstd
+	url = git@github.com:facebook/zstd.git

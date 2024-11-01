@@ -73,6 +73,7 @@ void processSerial(std::string pgn) {
 	profiler.init("matchNextMove");
 	profiler.init("inferId");
 	profiler.init("regex");
+	profiler.init("decompress");
 	profiler.init("main", 1);
 	profiler.start("main");
 	auto start = hrc::now();

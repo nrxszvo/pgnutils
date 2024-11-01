@@ -2,6 +2,7 @@
 #include <fstream>
 #include <ios>
 #include <sstream>
+#include <vector>
 
 void test();
 

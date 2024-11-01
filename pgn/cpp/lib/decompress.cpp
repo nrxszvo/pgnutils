@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <iostream>
+#include "../profiler.h"
 
 DecompressStream::DecompressStream(std::string zstfn, size_t frameSize) : frameSize(frameSize), rem("") {
 	in = {.src = NULL};
@@ -32,6 +33,7 @@ DecompressStream::~DecompressStream() {
 }
 
 std::streamsize DecompressStream::decompressFrame() {
+	profiler.start("decompress");
 	infile.read(static_cast<char*>(in_mem), frameSize);
 	std::streamsize bytesRead = infile.gcount();
 	if (bytesRead < 0) throw std::runtime_error("bytesRead < 0");
@@ -53,6 +55,7 @@ std::streamsize DecompressStream::decompressFrame() {
 			break;
 		}
 	}
+	profiler.stop("decompress");
 	return bytesRead;
 }
 
