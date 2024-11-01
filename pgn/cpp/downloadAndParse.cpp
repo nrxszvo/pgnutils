@@ -1,31 +1,52 @@
 #include <string>
 #include <iostream>
 #include <fstream>
-#include <chrono>
+#include <filesystem>
 #include "npy.hpp"
+#include "parallelParser.h"
 #include "parseMoves.h"
 #include "validate.h"
-
 #include "profiler.h"
+#include "utils.h"
 
-/*
-std::string getEta(int total, int soFar, std::chrono::time_point<std::chrono::high_resolution_clock> &start) {	
-	if (soFar == 0) {
-		return "tbd";
-	}
-	auto stop = std::chrono::high_resolution_clock::now();
-	long ellapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(stop-start).count();
-	long remaining = (total-soFar) * ellapsed / soFar;
-	int hrs = remaining / 1e9 / 3600;
-	int minutes = ((remaining / 1e9) % 3600) / 60;
-	int secs = (remaining / 1e9) % 60;
-	return std::to_string(hrs) + "h" + std::to_string(minutes) + "m" + std::to_string(secs);
+namespace fs = std::filesystem;
+
+void writeNpy(std::string outdir, Result& res) {
+
+	std::vector<int16_t> elos(res.welos->size() + res.belos->size());
+	elos.insert(elos.begin(), res.welos->begin(), res.welos->end());
+	elos.insert(elos.begin() + res.welos->size(), res.belos->begin(), res.belos->end());
+	
+	std::vector<int16_t> moves(2 * res.mvids->size());
+	moves.insert(moves.begin(), res.mvids->begin(), res.mvids->end());
+	moves.insert(moves.begin() + res.mvids->size(), res.clk->begin(), res.clk->end());
+	
+	npy::npy_data_ptr<int16_t> elo_ptr;
+	npy::npy_data_ptr<int64_t> gs_ptr; 
+	npy::npy_data_ptr<int16_t> mv_ptr;
+	
+	elo_ptr.data_ptr = elos.data(); 	
+	elo_ptr.shape = { 2, res.welos->size() };
+	gs_ptr.data_ptr = res.gamestarts->data();
+	mv_ptr.data_ptr = moves.data();
+	mv_ptr.shape = { 2, res.mvids->size() };
+
+	npy::write_npy(outdir + "/elos.npy", elo_ptr);
+	npy::write_npy(outdir + "/gamestarts.npy", gs_ptr);
+	npy::write_npy(outdir + "/moves.npy", mv_ptr);
 }
-*/
 
-int main() {
+int main(int argc, char *argv[]) {
+	ParallelParser parser(std::thread::hardware_concurrency()-1);
+	Result res = parser.parse(argv[1], "test");
+	writeNpy(argv[2], res);
+	return 0;
+}
+
+void processSerial(std::string pgn) {
 	PgnProcessor processor;
-	std::ifstream infile("../../test.pgn");
+	uintmax_t nbytes = fs::file_size(pgn);
+	std::ifstream infile(pgn);
 	std::string line;
 	int gamestart = 0;
 	int lineno = 0;
@@ -36,15 +57,17 @@ int main() {
 	std::vector<int16_t> clktimes;
 	
 	int64_t nmoves = 0;
+	uintmax_t bytesProcessed = 0;
 	profiler.init("parseMoves");
 	profiler.init("matchNextMove");
 	profiler.init("inferId");
 	profiler.init("regex");
 	profiler.init("main", 1);
 	profiler.start("main");
-
+	auto start = hrc::now();
 	while (std::getline(infile, line)) {
 		lineno++;
+		bytesProcessed += line.size();
 		std::string code = processor.processLine(line);		
 		if (code == "COMPLETE") {
 			profiler.start("parseMoves");
@@ -64,7 +87,8 @@ int main() {
 			clktimes.insert(clktimes.end(), clk.begin(), clk.end());
 
 			if (gamestarts.size() % 1000 == 0) {
-				std::cout << "processed " << std::to_string(gamestarts.size()) << " games\r" << std::flush;
+				std::string eta = getEta(nbytes, bytesProcessed, start);
+				std::cout << "processed " << std::to_string(gamestarts.size()) << " games (eta: " << eta << ")\r" << std::flush;
 			}
 			gamestart = lineno+1;
 		}
@@ -95,6 +119,4 @@ int main() {
 	npy::write_npy("elos.npy", elo_ptr);
 	npy::write_npy("gamestarts.npy", gs_ptr);
 	npy::write_npy("moves.npy", mv_ptr);
-
-	return 0;
 }
