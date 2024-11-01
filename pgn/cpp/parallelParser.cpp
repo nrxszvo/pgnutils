@@ -229,6 +229,7 @@ Result ParallelParser::parse(std::string pgn, std::string name) {
 	auto mvids = std::make_shared<std::vector<int16_t> >();
 	auto clktimes = std::make_shared<std::vector<int16_t> >();
 
+	int printFreq = 1;
 	int progress = 0;
 	int64_t ngames = 0;
 	int64_t nmoves = 0;
@@ -263,12 +264,12 @@ Result ParallelParser::parse(std::string pgn, std::string name) {
 			ngames++;
 			
 			int totalGamesEst = ngames / ((float)maxBytes / nbytes);
-			int curProg = int(10.0f * ngames / totalGamesEst);
+			int curProg = int((100.0f / printFreq) * ngames / totalGamesEst);
 			if (curProg > progress) {
 				progress = curProg;
 				std::string eta = getEta(nbytes, maxBytes, start);
 				std::string status = name + ": parsed " + std::to_string(ngames) + \
-									 " games (" + std::to_string(10*progress) + \
+									 " games (" + std::to_string(printFreq*progress) + \
 									 "% done, eta: " + eta + ")";
 				std::cout << status << '\r' << std::flush;
 			}

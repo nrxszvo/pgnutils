@@ -3,6 +3,7 @@
 
 using hrc = std::chrono::high_resolution_clock;
 using tp = std::chrono::time_point<std::chrono::high_resolution_clock>;
-using nano = std::chrono::nanoseconds;
+using milli = std::chrono::milliseconds;
 
 std::string getEta(uintmax_t total, uintmax_t soFar, tp &start);
+std::string zfill(int time);
