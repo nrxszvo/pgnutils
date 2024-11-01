@@ -40,17 +40,13 @@ void writeNpy(std::string outdir, Result& res) {
 
 int main(int argc, char *argv[]) {
 	auto start = std::chrono::high_resolution_clock::now();
-
+	profiler.init("decompress");
 	ParallelParser parser(std::thread::hardware_concurrency()-1);
 	Result res = parser.parse(argv[1], "test");
 	writeNpy(argv[2], res);
-
 	auto stop = std::chrono::high_resolution_clock::now();
-	int ellapsed = std::chrono::duration_cast<std::chrono::seconds>(stop-start).count();
-	int hrs = ellapsed/3600;	
-	int minutes = (ellapsed % 3600) / 60;
-	int secs = ellapsed % 60;
-	std::cout << std::endl << "Total processing time: " << hrs << ":" << zfill(minutes) << ":" << zfill(secs) << std::endl;
+	std::cout << std::endl << "Total processing time: " << getEllapsedStr(start, stop) << std::endl;
+	profiler.report();
 	return 0;
 }
 

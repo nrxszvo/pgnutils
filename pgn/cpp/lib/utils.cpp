@@ -20,3 +20,11 @@ std::string getEta(uintmax_t total, uintmax_t soFar, tp &start) {
 	int secs = remaining % 60;
 	return std::to_string(hrs) + ":" + zfill(minutes) + ":" + zfill(secs);
 }
+
+std::string getEllapsedStr(tp& start, tp& stop) {
+	int ellapsed = std::chrono::duration_cast<std::chrono::seconds>(stop-start).count();
+	int hrs = ellapsed/3600;	
+	int minutes = (ellapsed % 3600) / 60;
+	int secs = ellapsed % 60;
+	return std::to_string(hrs) + ":" + zfill(minutes) + ":" + zfill(secs);
+}
