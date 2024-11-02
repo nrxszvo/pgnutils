@@ -20,7 +20,7 @@ string movenoToStr(int moveno) {
 	return to_string(moveno) + ". ";
 }
 
-tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv) {
+tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv, bool requireClk) {
 	int mvstart = idx;
 	string nextmv = movenoToStr(curmv+1);
 	while(idx < moveStr.size() && moveStr.substr(idx, nextmv.size()) != nextmv) {
@@ -30,11 +30,11 @@ tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv) {
 	string ss = moveStr.substr(mvstart, idx-mvstart);
 
 	profiler.start("regex");
-	bool found1, found2noclk, found1noclk;
+	bool found1=false, found2noclk=false, found1noclk=false;
 	bool found2 = re2::RE2::PartialMatch(ss, twoMoves, &wm, &wclk, &bm, &bclk);
 	if (!found2) {
 		found1 = re2::RE2::PartialMatch(ss, oneMove, &wm, &wclk);
-		if (!found1) {
+		if (!found1 && !requireClk) {
 			found2noclk = re2::RE2::PartialMatch(ss, twoMovesNoClk, &wm, &bm);
 			if (!found2noclk) {
 				found1noclk = re2::RE2::PartialMatch(ss, oneMoveNoClk, &wm);
@@ -63,7 +63,7 @@ int clkToSec(string timeStr) {
 }
 
 
-tuple<vector<int16_t>, vector<int16_t> > parseMoves(string moveStr) {
+tuple<vector<int16_t>, vector<int16_t> > parseMoves(string moveStr, bool requireClk) {
 	vector<int16_t> mvids;
 	vector<int16_t> clk;
 	int curmv = 1;
@@ -73,10 +73,10 @@ tuple<vector<int16_t>, vector<int16_t> > parseMoves(string moveStr) {
 	
 	while (idx < moveStr.size()) {
 		profiler.start("matchNextMove");
-		tie(idx, matches) = matchNextMove(moveStr, idx, curmv);
+		tie(idx, matches) = matchNextMove(moveStr, idx, curmv, requireClk);
 		profiler.stop("matchNextMove");
 
-		if (idx == moveStr.size() && matches.size() == 0) {
+		if (matches.size() == 0) {
 			break;
 		}
 		string wm = matches[0];

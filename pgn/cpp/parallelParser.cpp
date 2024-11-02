@@ -275,7 +275,7 @@ ParallelParser::~ParallelParser() {
 	}
 }
 
-ParserOutput ParallelParser::parse(std::string pgn, std::string name) {
+ParserOutput ParallelParser::parse(std::string pgn, std::string name, int printFreq) {
 	uintmax_t nbytes = fs::file_size(pgn);	
 	{
 		std::unique_lock<std::mutex> lock(this->pgnMtx);
@@ -290,7 +290,6 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name) {
 	auto mvids = std::make_shared<std::vector<int16_t> >();
 	auto clktimes = std::make_shared<std::vector<int16_t> >();
 
-	int printFreq = 10;
 	int64_t ngames = 0;
 	int totalGames = INT_MAX;
 	int nFinished = 0;

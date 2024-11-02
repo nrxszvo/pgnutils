@@ -72,5 +72,5 @@ class ParallelParser {
 public:
 	ParallelParser(int nReaders);
 	~ParallelParser();
-	ParserOutput parse(std::string pgn, std::string name);
+	ParserOutput parse(std::string pgn, std::string name, int printFreq=60);
 };

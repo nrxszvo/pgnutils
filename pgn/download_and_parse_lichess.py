@@ -58,7 +58,7 @@ def write_npys(tmpdir, npy_dir, npyname):
         nmoves = moves.shape[1]
 
         with open(get_fn("processed.txt"), "a") as f:
-            f.write(f"{ngames},{nmoves}")
+            f.write(f"{ngames},{nmoves},")
 
         if nmoves > 0:
             mdfile = get_fn("md.npy")
@@ -167,26 +167,28 @@ def main(list_fn, npy_dir, parser_bin):
                 npyname, zst_fn = zst_q.get()
                 url_q.put((next_url, next_npy))
 
-                print_safe(f"{npyname}: processing zst...")
-                cmd = [
-                    "./" + parser_bin,
-                    "--zst",
-                    zst_fn,
-                    "--name",
-                    npyname,
-                    "--outdir",
-                    tempdir,
-                ]
-                p = subprocess.Popen(cmd)
-                p.wait()
+                try:
+                    print_safe(f"{npyname}: processing zst...")
+                    cmd = [
+                        "./" + parser_bin,
+                        "--zst",
+                        zst_fn,
+                        "--name",
+                        npyname,
+                        "--outdir",
+                        tempdir,
+                    ]
+                    p = subprocess.Popen(cmd)
+                    p.wait()
 
-                nmoves = write_npys(tempdir, npy_dir, npyname)
-                if nmoves == 0:
-                    print("Last archive contained zero moves: terminating...")
-                    break
-                os.remove(zst_fn)
+                    nmoves = write_npys(tempdir, npy_dir, npyname)
+                    if nmoves == 0:
+                        print("Last archive contained zero moves: terminating...")
+                        break
+                finally:
+                    os.remove(zst_fn)
     finally:
-        print_safe("closing main")
+        print_safe("cleaning up...")
         url_q.close()
         zst_q.close()
         try:
@@ -194,6 +196,9 @@ def main(list_fn, npy_dir, parser_bin):
         except Exception as e:
             print(e)
             dl_p.kill()
+        for fn in os.listdir("."):
+            if re.match("lichess_db_standard_rated.*\.zst.*\.tmp", fn):
+                os.remove(fn)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ ABSL_FLAG(std::string, zst, "", ".zst archive to decompress and parse");
 ABSL_FLAG(std::string, name, "", "human-readable name for archive");
 ABSL_FLAG(std::string, outdir, ".", "output directory to store npy output files");
 ABSL_FLAG(bool, serial, false, "Disable parallel processing");
+ABSL_FLAG(int, printFreq, 60, "Print status every printFreq seconds");
 
 void writeNpy(std::string outdir, ParserOutput& res) {
 
@@ -53,7 +54,7 @@ int main(int argc, char *argv[]) {
 		res = processSerial(absl::GetFlag(FLAGS_zst));
 	} else {
 		ParallelParser parser(std::thread::hardware_concurrency()-1);
-		res = parser.parse(absl::GetFlag(FLAGS_zst), absl::GetFlag(FLAGS_name));
+		res = parser.parse(absl::GetFlag(FLAGS_zst), absl::GetFlag(FLAGS_name), absl::GetFlag(FLAGS_printFreq));
 	}
 	writeNpy(absl::GetFlag(FLAGS_outdir), res);
 	auto stop = std::chrono::high_resolution_clock::now();
