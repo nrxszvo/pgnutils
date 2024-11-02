@@ -1,18 +1,23 @@
 #include <string>
 #include <iostream>
-#include <filesystem>
 #include <chrono>
 #include "npy.hpp"
 #include "parallelParser.h"
+#include "serialParser.h"
 #include "lib/parseMoves.h"
 #include "lib/validate.h"
 #include "profiling/profiler.h"
 #include "lib/utils.h"
 #include "lib/decompress.h"
+#include "absl/flags/flag.h"
+#include "absl/flags/parse.h"
 
-namespace fs = std::filesystem;
+ABSL_FLAG(std::string, zst, "", ".zst archive to decompress and parse");
+ABSL_FLAG(std::string, name, "", "human-readable name for archive");
+ABSL_FLAG(std::string, outdir, ".", "output directory to store npy output files");
+ABSL_FLAG(bool, serial, false, "Disable parallel processing");
 
-void writeNpy(std::string outdir, Result& res) {
+void writeNpy(std::string outdir, ParserOutput& res) {
 
 	std::vector<int16_t> elos(res.welos->size() + res.belos->size());
 	elos.insert(elos.begin(), res.welos->begin(), res.welos->end());
@@ -38,104 +43,17 @@ void writeNpy(std::string outdir, Result& res) {
 	npy::write_npy(outdir + "/moves.npy", mv_ptr);
 }
 
-
-void processSerial(std::string zst) {
-	PgnProcessor processor;
-	int gamestart = 0;
-	int lineno = 0;
-	std::vector<int16_t> welos;
-	std::vector<int16_t> belos;
-	std::vector<int64_t> gamestarts;
-	std::vector<int16_t> mvids;
-	std::vector<int16_t> clktimes;
-	
-	uintmax_t nbytes = fs::file_size(zst);	
-	int64_t nmoves = 0;
-	int64_t ngames = 0;
-	size_t bytesRead;
-	uintmax_t bytesProcessed = 0;
-	int progress = 0;
-	profiler.init("parseMoves");
-	profiler.init("matchNextMove");
-	profiler.init("inferId");
-	profiler.init("regex");
-	profiler.init("decompress");
-	profiler.init("main", 1);
-	profiler.start("main");
-	auto start = hrc::now();
-	DecompressStream decompressor(zst);
-	while((bytesRead = decompressor.decompressFrame()) != 0) {
-		std::vector<std::string> lines = decompressor.getOutput();
-		bytesProcessed += bytesRead;
-		for (auto line: lines) {
-			lineno++;
-			std::string code = processor.processLine(line);		
-			if (code == "COMPLETE") {
-				profiler.start("parseMoves");
-				auto [moves, clk] = parseMoves(processor.getMoveStr());
-				profiler.stop("parseMoves");
-				auto errs = validateGame(gamestart, processor.getMoveStr(), moves);
-				if (errs.size() > 0) {
-					for (auto [gameid, err]: errs) {
-						std::cout << err << std::endl;
-					}
-					throw std::runtime_error("evaluation failed");
-				}
-				welos.push_back((short)processor.getWelo());
-				belos.push_back((short)processor.getBelo());
-				gamestarts.push_back(nmoves);
-				mvids.insert(mvids.end(), moves.begin(), moves.end());
-				clktimes.insert(clktimes.end(), clk.begin(), clk.end());
-				ngames++;	
-
-				int totalGamesEst = ngames / ((float)bytesProcessed / nbytes);
-				int curProg = int(100.0f * ngames / totalGamesEst);
-				if (curProg > progress) {
-					progress = curProg;
-					std::string eta = getEta(totalGamesEst, ngames, start);
-					std::string status = "parsed " + std::to_string(ngames) + \
-										 " games (" + std::to_string(progress) + \
-										 "% done, eta: " + eta + ")";
-					std::cout << status << '\r' << std::flush;
-				}
-				gamestart = lineno+1;
-			}
-		}
-	}
-	profiler.stop("main");
-	std::cout << std::endl;
-	profiler.report();
-
-	std::vector<int16_t> elos(welos.size() + belos.size());
-	elos.insert(elos.begin(), welos.begin(), welos.end());
-	elos.insert(elos.begin() + welos.size(), belos.begin(), belos.end());
-	
-	std::vector<int16_t> moves(2 * mvids.size());
-	moves.insert(moves.begin(), mvids.begin(), mvids.end());
-	moves.insert(moves.begin() + mvids.size(), clktimes.begin(), clktimes.end());
-	
-	npy::npy_data_ptr<int16_t> elo_ptr;
-	npy::npy_data_ptr<int64_t> gs_ptr; 
-	npy::npy_data_ptr<int16_t> mv_ptr;
-	
-	elo_ptr.data_ptr = elos.data(); 	
-	elo_ptr.shape = { 2, welos.size() };
-	gs_ptr.data_ptr = gamestarts.data();
-	gs_ptr.shape = { gamestarts.size() }; 
-	mv_ptr.data_ptr = moves.data();
-	mv_ptr.shape = { 2, mvids.size() };
-
-	npy::write_npy("elos.npy", elo_ptr);
-	npy::write_npy("gamestarts.npy", gs_ptr);
-	npy::write_npy("moves.npy", mv_ptr);
-}
-
 int main(int argc, char *argv[]) {
+	absl::ParseCommandLine(argc, argv);
 	auto start = std::chrono::high_resolution_clock::now();
-	profiler.init("decompress");
-	ParallelParser parser(std::thread::hardware_concurrency()-1);
-	Result res = parser.parse(argv[1], argv[2]);
-	writeNpy(argv[3], res);
+	ParserOutput res;
+	if (absl::GetFlag(FLAGS_serial)) {
+		res = processSerial(absl::GetFlag(FLAGS_zst));
+	} else {
+		ParallelParser parser(std::thread::hardware_concurrency()-1);
+		ParserOutput res = parser.parse(absl::GetFlag(FLAGS_zst), absl::GetFlag(FLAGS_name));
+	}
+	writeNpy(absl::GetFlag(FLAGS_outdir), res);
 	auto stop = std::chrono::high_resolution_clock::now();
 	std::cout << std::endl << "Total processing time: " << getEllapsedStr(start, stop) << std::endl;
 	profiler.report();

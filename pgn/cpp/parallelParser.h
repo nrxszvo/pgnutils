@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <memory>
 #include <thread>
+#include "parser.h"
 
 struct Data {
 	uintmax_t bytesProcessed;
@@ -55,16 +56,6 @@ struct MoveData: Data {
 	std::vector<std::pair<int, std::string> > errs;
 };
 
-struct Result {
-	int64_t ngames;
-	int64_t nmoves;
-	std::shared_ptr<std::vector<int16_t> > welos;
-	std::shared_ptr<std::vector<int16_t> > belos;
-	std::shared_ptr<std::vector<int64_t> > gamestarts;
-	std::shared_ptr<std::vector<int16_t> > mvids;
-	std::shared_ptr<std::vector<int16_t> > clk;
-};
-
 class ParallelParser {
 	std::queue<std::string> pgnQ;
 	std::queue<std::shared_ptr<GameData> > gamesQ;
@@ -81,5 +72,5 @@ class ParallelParser {
 public:
 	ParallelParser(int nReaders);
 	~ParallelParser();
-	Result parse(std::string pgn, std::string name);
+	ParserOutput parse(std::string pgn, std::string name);
 };

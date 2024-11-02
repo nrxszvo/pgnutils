@@ -1,8 +1,8 @@
 #include "parallelParser.h"
-#include "decompress.h"
-#include "parseMoves.h"
-#include "validate.h"
-#include "utils.h"
+#include "lib/decompress.h"
+#include "lib/parseMoves.h"
+#include "lib/validate.h"
+#include "lib/utils.h"
 #include <fstream>
 #include <stdexcept>
 #include <thread>
@@ -275,7 +275,7 @@ ParallelParser::~ParallelParser() {
 	}
 }
 
-Result ParallelParser::parse(std::string pgn, std::string name) {
+ParserOutput ParallelParser::parse(std::string pgn, std::string name) {
 	uintmax_t nbytes = fs::file_size(pgn);	
 	{
 		std::unique_lock<std::mutex> lock(this->pgnMtx);
@@ -338,5 +338,5 @@ Result ParallelParser::parse(std::string pgn, std::string name) {
 			throw std::runtime_error("invalid code: " + md->info);
 		}
 	}
-	return Result(ngames, nmoves, welos, belos, gamestarts, mvids, clktimes);
+	return ParserOutput(ngames, nmoves, welos, belos, gamestarts, mvids, clktimes);
 }
