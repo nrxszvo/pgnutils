@@ -11,6 +11,7 @@
 #include "lib/decompress.h"
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
+#include "absl/flags/usage.h"
 
 ABSL_FLAG(std::string, zst, "", ".zst archive to decompress and parse");
 ABSL_FLAG(std::string, name, "", "human-readable name for archive");
@@ -44,6 +45,7 @@ void writeNpy(std::string outdir, ParserOutput& res) {
 }
 
 int main(int argc, char *argv[]) {
+	absl::SetProgramUsageMessage("Decompress and parse lichess .zst game archives into npy files for use with training mimicChess network");
 	absl::ParseCommandLine(argc, argv);
 	auto start = std::chrono::high_resolution_clock::now();
 	ParserOutput res;
