@@ -290,13 +290,13 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name) {
 	auto mvids = std::make_shared<std::vector<int16_t> >();
 	auto clktimes = std::make_shared<std::vector<int16_t> >();
 
-	int printFreq = 1;
-	int progress = 0;
+	int printFreq = 10;
 	int64_t ngames = 0;
 	int totalGames = INT_MAX;
 	int nFinished = 0;
 	size_t maxBytes = 0;
-	auto start = std::chrono::high_resolution_clock::now();
+	auto start = hrc::now();
+	auto lastPrintTime = start;
 	while (ngames < totalGames || nFinished < this->nReaders) {
 		std::shared_ptr<MoveData> md;
 		{
@@ -323,14 +323,14 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name) {
 			ngames++;
 			
 			int totalGamesEst = ngames / ((float)maxBytes / nbytes);
-			int curProg = int((100.0f / printFreq) * ngames / totalGamesEst);
-			if (curProg > progress) {
-				progress = curProg;
+			int curProg = int(100.0f * ngames / totalGamesEst);
+			if (ellapsedGTE(lastPrintTime, printFreq)) {
 				std::string eta = getEta(totalGamesEst, ngames, start);
 				std::string status = name + ": parsed " + std::to_string(ngames) + \
-									 " games (" + std::to_string(printFreq*progress) + \
+									 " games (" + std::to_string(curProg) + \
 									 "% done, eta: " + eta + ")";
-				std::cout << status << '\r' << std::flush;
+				std::cout << status << std::endl;
+				lastPrintTime = hrc::now();
 			}
 		} else {
 			throw std::runtime_error("invalid code: " + md->info);

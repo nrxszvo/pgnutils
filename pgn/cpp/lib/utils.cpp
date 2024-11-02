@@ -12,6 +12,7 @@ std::string getEta(uintmax_t total, uintmax_t soFar, tp &start) {
 		return "tbd";
 	}
 	auto stop = hrc::now();
+	soFar = std::min(total, soFar);
 	long ellapsed = std::chrono::duration_cast<milli>(stop-start).count();
 	long remaining_ms = (total-soFar) * ellapsed / soFar;
 	int remaining = int(remaining_ms/1e3);
@@ -33,4 +34,10 @@ std::string getEllapsedStr(tp& start, tp& stop) {
 	return getEllapsedStr(ellapsed);
 }
 
+bool ellapsedGTE(tp& last, int thresh) {
+	auto now = hrc::now();
+	int ellapsed = std::chrono::duration_cast<std::chrono::seconds>(now-last).count();
+	return ellapsed >= thresh;
+}
 
+	

@@ -16,7 +16,10 @@ def collect_existing_npy(npy_dir):
     procfn = os.path.join(npy_dir, "processed.txt")
     if os.path.exists(procfn):
         with open(procfn) as f:
-            existing = [line.split(",")[0] for line in f.readlines()]
+            for line in f:
+                vs = line.rstrip().split(",")
+                if vs[-1] != "failed":
+                    existing.append(vs[0])
     return existing
 
 
@@ -104,9 +107,9 @@ def write_npys(tmpdir, npy_dir, npyname):
     finally:
         with open(get_fn("processed.txt"), "a") as f:
             if success:
-                f.write("...succeeded\n")
+                f.write("succeeded\n")
             else:
-                f.write("...failed\n")
+                f.write("failed\n")
     return nmoves
 
 
@@ -160,13 +163,21 @@ def main(list_fn, npy_dir, parser_bin):
     url_q.put((url, npyname))
     try:
         with tempfile.TemporaryDirectory() as tempdir:
-            tempdir = "."
             for next_url, next_npy in to_proc[1:] + [("DONE", None)]:
                 npyname, zst_fn = zst_q.get()
                 url_q.put((next_url, next_npy))
 
-                print_safe(f"{npyname}: parsing pgn...")
-                p = subprocess.Popen(("./" + parser_bin, zst_fn, npyname, tempdir))
+                print_safe(f"{npyname}: processing zst...")
+                cmd = [
+                    "./" + parser_bin,
+                    "--zst",
+                    zst_fn,
+                    "--name",
+                    npyname,
+                    "--outdir",
+                    tempdir,
+                ]
+                p = subprocess.Popen(cmd)
                 p.wait()
 
                 nmoves = write_npys(tempdir, npy_dir, npyname)
