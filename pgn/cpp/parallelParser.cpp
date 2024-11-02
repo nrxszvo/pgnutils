@@ -293,7 +293,6 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name) {
 	int printFreq = 1;
 	int progress = 0;
 	int64_t ngames = 0;
-	int64_t nmoves = 0;
 	int totalGames = INT_MAX;
 	int nFinished = 0;
 	size_t maxBytes = 0;
@@ -318,10 +317,9 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name) {
 			maxBytes = std::max(maxBytes, md->bytesProcessed);	
 			welos->push_back(md->welo);
 			belos->push_back(md->belo);
-			gamestarts->push_back(nmoves);
+			gamestarts->push_back(mvids->size());
 			mvids->insert(mvids->end(), md->mvids.begin(), md->mvids.end());
 			clktimes->insert(clktimes->end(), md->clk.begin(), md->clk.end());
-			nmoves += md->mvids.size();
 			ngames++;
 			
 			int totalGamesEst = ngames / ((float)maxBytes / nbytes);
@@ -338,5 +336,5 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name) {
 			throw std::runtime_error("invalid code: " + md->info);
 		}
 	}
-	return ParserOutput(ngames, nmoves, welos, belos, gamestarts, mvids, clktimes);
+	return ParserOutput(welos, belos, gamestarts, mvids, clktimes);
 }

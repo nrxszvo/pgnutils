@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
 		res = processSerial(absl::GetFlag(FLAGS_zst));
 	} else {
 		ParallelParser parser(std::thread::hardware_concurrency()-1);
-		ParserOutput res = parser.parse(absl::GetFlag(FLAGS_zst), absl::GetFlag(FLAGS_name));
+		res = parser.parse(absl::GetFlag(FLAGS_zst), absl::GetFlag(FLAGS_name));
 	}
 	writeNpy(absl::GetFlag(FLAGS_outdir), res);
 	auto stop = std::chrono::high_resolution_clock::now();

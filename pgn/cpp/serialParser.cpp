@@ -24,8 +24,6 @@ ParserOutput processSerial(std::string zst) {
 	size_t bytesRead;
 	uintmax_t bytesProcessed = 0;
 
-	int64_t nmoves = 0;
-	int64_t ngames = 0;
 	int progress = 0;
 	int printFreq = 10;
 
@@ -55,12 +53,11 @@ ParserOutput processSerial(std::string zst) {
 				}
 				welos->push_back((short)processor.getWelo());
 				belos->push_back((short)processor.getBelo());
-				gamestarts->push_back(nmoves);
+				gamestarts->push_back(mvids->size());
 				mvids->insert(mvids->end(), moves.begin(), moves.end());
 				clktimes->insert(clktimes->end(), clk.begin(), clk.end());
-				nmoves += mvids->size();
-				ngames++;	
-
+				
+				int ngames = gamestarts->size();
 				int totalGamesEst = ngames / ((float)bytesProcessed / nbytes);
 				int curProg = int((100.0f / printFreq) * ngames / totalGamesEst);
 				if (curProg > progress) {
@@ -75,6 +72,5 @@ ParserOutput processSerial(std::string zst) {
 			}
 		}
 	}
-
-	return ParserOutput(ngames, nmoves, welos, belos, gamestarts, mvids, clktimes);	
+	return ParserOutput(welos, belos, gamestarts, mvids, clktimes);	
 }
