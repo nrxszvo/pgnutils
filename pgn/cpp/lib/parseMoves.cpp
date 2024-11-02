@@ -5,7 +5,7 @@
 #include <tuple>
 #include "parseMoves.h"
 #include "inference.h"
-#include "../profiler.h"
+#include "profiling/profiler.h"
 
 using namespace std;
 
@@ -13,6 +13,8 @@ const string MV_PAT = "O-O-O|O-O|[a-hRNBQK]+[0-9=x]*[a-hRNBQK]*[0-9]*[=RNBQ]*";
 const string CLK_PAT = "\\{.*\\[%clk ([0-9:]+)\\].*\\}";
 const re2::RE2 twoMoves("\\..* (" + MV_PAT + ").*" + CLK_PAT + ".* (" + MV_PAT + ").*" + CLK_PAT);
 const re2::RE2 oneMove("\\..* (" + MV_PAT + ").*" + CLK_PAT);
+const re2::RE2 twoMovesNoClk("\\..* (" + MV_PAT + ").* (" + MV_PAT + ").*");
+const re2::RE2 oneMoveNoClk("\\.* (" + MV_PAT + ").*");
 
 string movenoToStr(int moveno) {
 	return to_string(moveno) + ". ";
@@ -28,10 +30,16 @@ tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv) {
 	string ss = moveStr.substr(mvstart, idx-mvstart);
 
 	profiler.start("regex");
-	bool found1;
+	bool found1, found2noclk, found1noclk;
 	bool found2 = re2::RE2::PartialMatch(ss, twoMoves, &wm, &wclk, &bm, &bclk);
 	if (!found2) {
 		found1 = re2::RE2::PartialMatch(ss, oneMove, &wm, &wclk);
+		if (!found1) {
+			found2noclk = re2::RE2::PartialMatch(ss, twoMovesNoClk, &wm, &bm);
+			if (!found2noclk) {
+				found1noclk = re2::RE2::PartialMatch(ss, oneMoveNoClk, &wm);
+			}
+		}
 	}
 	profiler.stop("regex");
 
@@ -40,7 +48,11 @@ tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv) {
 		matches = {wm, wclk, bm, bclk};
 	} else if (found1) {
 		matches = {wm, wclk};
-	}
+	} else if (found2noclk) {
+		matches = {wm, "0:00:00", bm, "0:00:00"};
+	} else if (found1noclk) {
+		matches = {wm, "0:00:00"};
+	} 
 	return make_tuple(idx, matches);
 }
 

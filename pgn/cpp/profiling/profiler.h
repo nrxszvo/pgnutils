@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <string>
 #include <vector>
+#include "lib/utils.h"
 
 struct Block {
 	std::chrono::time_point<std::chrono::high_resolution_clock> start;
@@ -53,10 +54,8 @@ public:
 			if (block.reportFmt == 0) {
 				val = std::to_string(getAverage(block)) + " ms";
 			} else {
-				float total_s = block.total_nano/1e9;
-				int min = int(total_s/60);
-				auto sec = total_s - 60*min;
-				val = std::to_string(min) + "m" + std::to_string(sec) + "s";
+				int ellapsed = int(block.total_nano/1e9);
+				val = getEllapsedStr(ellapsed);
 			}
 			std::cout << name << ": " << val << std::endl;
 		}

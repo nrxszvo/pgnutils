@@ -28,3 +28,10 @@ std::string getEllapsedStr(tp& start, tp& stop) {
 	int secs = ellapsed % 60;
 	return std::to_string(hrs) + ":" + zfill(minutes) + ":" + zfill(secs);
 }
+
+std::string getEllapsedStr(int ellapsed) {
+	int hrs = ellapsed/3600;	
+	int minutes = (ellapsed % 3600) / 60;
+	int secs = ellapsed % 60;
+	return std::to_string(hrs) + ":" + zfill(minutes) + ":" + zfill(secs);
+}

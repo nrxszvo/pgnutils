@@ -4,7 +4,8 @@
 #include <stdexcept>
 #include <sstream>
 #include <iostream>
-#include "../profiler.h"
+#include <string>
+#include "profiling/profiler.h"
 
 DecompressStream::DecompressStream(std::string zstfn, size_t frameSize) : frameSize(frameSize), rem("") {
 	in = {.src = NULL};

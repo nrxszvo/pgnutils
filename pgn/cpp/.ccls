@@ -1,2 +1,3 @@
 clang
+clang++
 %h %hpp %cpp -std=c++20
