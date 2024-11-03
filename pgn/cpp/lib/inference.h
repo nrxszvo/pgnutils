@@ -1,5 +1,6 @@
 #include <string>
 #include <vector>
+#include <memory>
 
 #define COLORW 1
 #define COLORB -1
@@ -47,9 +48,9 @@ public:
 	MoveParser(); 
 	int16_t inferId(std::string& mv);
 private:
-	std::vector<std::vector<Piece*> > board;
-	std::vector<Piece *> white;
-	std::vector<Piece *> black;
+	std::vector<std::vector<std::shared_ptr<Piece>> > board;
+	std::vector<std::shared_ptr<Piece> > white;
+	std::vector<std::shared_ptr<Piece> > black;
 	std::string prevMv;
 	int color;
 };

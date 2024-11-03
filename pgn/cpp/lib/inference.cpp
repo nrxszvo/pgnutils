@@ -2,6 +2,7 @@
 #include <vector>
 #include <functional>
 #include <stdexcept>
+#include <memory>
 #include "inference.h"
 
 using namespace std;
@@ -10,30 +11,30 @@ int sign(int v) {
 	return v > 0 ? 1 : v < 0 ? -1 : 0;
 }
 
-tuple<vector<vector<Piece*> >, vector<Piece*>, vector<Piece*> > initBoardState() {
-	vector<vector<Piece*> > board(8, vector<Piece*>(8));
-	vector<Piece*> white, black;
+tuple<vector<vector<std::shared_ptr<Piece> > >, vector<std::shared_ptr<Piece> >, vector<std::shared_ptr<Piece> > > initBoardState() {
+	vector<vector<std::shared_ptr<Piece> > > board(8, vector<std::shared_ptr<Piece>>(8));
+	vector<std::shared_ptr<Piece> > white, black;
 
 	for (int i=0; i<8; i++) {
-		board[1][i] = new Piece('P', 1, i, 8+i, COLORW);
-		board[6][i] = new Piece('P', 6, i, 24+i, COLORB);
+		board[1][i] = std::make_shared<Piece>('P', 1, i, 8+i, COLORW);
+		board[6][i] = std::make_shared<Piece>('P', 6, i, 24+i, COLORB);
 	}
-	board[0][QROOK] = new Piece('R', 0, 0, 0, COLORW);
-	board[0][QKNIGHT] = new Piece('N', 0, 1, 1, COLORW);
-	board[0][QBISHOP] = new Piece('B', 0, 2, 2, COLORW);
-	board[0][QUEEN] = new Piece('Q', 0, 3, 3, COLORW);
-	board[0][KING] = new Piece('K', 0, 4, 4, COLORW);
-	board[0][KBISHOP] = new Piece('B', 0, 5, 5, COLORW);
-	board[0][KKNIGHT] = new Piece('N', 0, 6, 6, COLORW);
-	board[0][KROOK] = new Piece('R', 0, 7, 7, COLORW);
-	board[7][QROOK] = new Piece('R', 7, 0, 16, COLORB);
-	board[7][QKNIGHT] = new Piece('N', 7, 1, 17, COLORB);
-	board[7][QBISHOP] = new Piece('B', 7, 2, 18, COLORB);
-	board[7][QUEEN] = new Piece('Q', 7, 3, 19, COLORB);
-	board[7][KING] = new Piece('K', 7, 4, 20, COLORB);
-	board[7][KBISHOP] = new Piece('B', 7, 5, 21, COLORB);
-	board[7][KKNIGHT] = new Piece('N', 7, 6, 22, COLORB);
-	board[7][KROOK] = new Piece('R', 7, 7, 23, COLORB);
+	board[0][QROOK] = std::make_shared<Piece>('R', 0, 0, 0, COLORW);
+	board[0][QKNIGHT] = std::make_shared<Piece>('N', 0, 1, 1, COLORW);
+	board[0][QBISHOP] = std::make_shared<Piece>('B', 0, 2, 2, COLORW);
+	board[0][QUEEN] = std::make_shared<Piece>('Q', 0, 3, 3, COLORW);
+	board[0][KING] = std::make_shared<Piece>('K', 0, 4, 4, COLORW);
+	board[0][KBISHOP] = std::make_shared<Piece>('B', 0, 5, 5, COLORW);
+	board[0][KKNIGHT] = std::make_shared<Piece>('N', 0, 6, 6, COLORW);
+	board[0][KROOK] = std::make_shared<Piece>('R', 0, 7, 7, COLORW);
+	board[7][QROOK] = std::make_shared<Piece>('R', 7, 0, 16, COLORB);
+	board[7][QKNIGHT] = std::make_shared<Piece>('N', 7, 1, 17, COLORB);
+	board[7][QBISHOP] = std::make_shared<Piece>('B', 7, 2, 18, COLORB);
+	board[7][QUEEN] = std::make_shared<Piece>('Q', 7, 3, 19, COLORB);
+	board[7][KING] = std::make_shared<Piece>('K', 7, 4, 20, COLORB);
+	board[7][KBISHOP] = std::make_shared<Piece>('B', 7, 5, 21, COLORB);
+	board[7][KKNIGHT] = std::make_shared<Piece>('N', 7, 6, 22, COLORB);
+	board[7][KROOK] = std::make_shared<Piece>('R', 7, 7, 23, COLORB);
 
 	for (int i=0; i<2; i++) {
 		for (int j=0; j<8; j++) {
@@ -144,7 +145,7 @@ MoveState parseMove(string mv, string lastMv, int color) {
 	}
 }
 
-int castleToMvid(MoveState &ms, vector<vector<Piece*>>& board, vector<Piece*>& state) {
+int castleToMvid(MoveState &ms, vector<vector<std::shared_ptr<Piece> > >& board, vector<std::shared_ptr<Piece> >& state) {
 	if (ms.castle == "king") {
 		state[KING]->file = 6;
 		state[KROOK]->file = 5;
@@ -181,7 +182,7 @@ int castleToMvid(MoveState &ms, vector<vector<Piece*>>& board, vector<Piece*>& s
 	}
 }
 
-bool legalPawnMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int df, bool enpassant) {
+bool legalPawnMove(std::shared_ptr<Piece> piece, vector<vector<std::shared_ptr<Piece> > >& board, int dr, int df, bool enpassant) {
 	auto [sr, sf] = piece->pos();
 	if (sf == df) {
 		if (abs(dr-sr) > 2) {
@@ -215,7 +216,7 @@ bool legalPawnMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int df,
 	}
 }
 
-bool legalRookMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int df) {
+bool legalRookMove(std::shared_ptr<Piece> piece, vector<vector<std::shared_ptr<Piece> > >& board, int dr, int df) {
 	auto [sr, sf] = piece->pos();
 	if (sf != df && sr != dr) {
 		return false;
@@ -236,7 +237,7 @@ bool legalRookMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int df)
 	return board[dr][df] == nullptr || board[dr][df]->color != piece->color;
 }
 
-bool legalKnightMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int df) {
+bool legalKnightMove(std::shared_ptr<Piece> piece, vector<vector<std::shared_ptr<Piece>> >& board, int dr, int df) {
 	auto [sr, sf] = piece->pos();
 	if (abs(sf-df) == 2) {
 		if (abs(sr-dr) != 1) {
@@ -252,7 +253,7 @@ bool legalKnightMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int d
 	return board[dr][df] == nullptr || board[dr][df]->color != piece->color;
 }
 
-bool legalBishopMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int df) {
+bool legalBishopMove(std::shared_ptr<Piece> piece, vector<vector<std::shared_ptr<Piece>> >& board, int dr, int df) {
 	auto [sr, sf] = piece->pos();
 	if (abs(sf-df) != abs(sr-dr)) {
 		return false;
@@ -271,11 +272,11 @@ bool legalBishopMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int d
 
 }
 
-bool legalQueenMove(Piece *piece, vector<vector<Piece*> >& board, int dr, int df) {
+bool legalQueenMove(std::shared_ptr<Piece> piece, vector<vector<std::shared_ptr<Piece>> >& board, int dr, int df) {
 	return legalRookMove(piece, board, dr, df) || legalBishopMove(piece, board, dr, df);
 }
 
-bool legalMove(Piece *piece, vector<vector<Piece*> >& board, string& dest, bool enpassant = false) {
+bool legalMove(std::shared_ptr<Piece> piece, vector<vector<std::shared_ptr<Piece>> >& board, string& dest, bool enpassant = false) {
 	int dr = rankToInt(dest[1]);
 	int df = fileToInt(dest[0]);
 	switch (piece->name) {
@@ -294,7 +295,7 @@ bool legalMove(Piece *piece, vector<vector<Piece*> >& board, string& dest, bool 
 	}
 }
 
-bool attacking(Piece *a, Piece *b, vector<vector<Piece*> >& board) {
+bool attacking(std::shared_ptr<Piece> a, std::shared_ptr<Piece> b, vector<vector<std::shared_ptr<Piece>> >& board) {
 	auto [dr, df] = b->pos();
 	switch (a->name) {
 		case 'P':
@@ -315,8 +316,8 @@ bool attacking(Piece *a, Piece *b, vector<vector<Piece*> >& board) {
 	}
 }
 
-bool kingInCheck(vector<vector<Piece*> >& board, vector<Piece*>& cur, vector<Piece*>& opp) {
-	Piece *king = cur[KING];	
+bool kingInCheck(vector<vector<std::shared_ptr<Piece>> >& board, vector<std::shared_ptr<Piece>>& cur, vector<std::shared_ptr<Piece>>& opp) {
+	std::shared_ptr<Piece> king = cur[KING];	
 	for (auto piece: opp) {
 		if (!piece->captured && attacking(piece, king, board)) {
 			return true;
@@ -332,7 +333,7 @@ pair<int, int> mvToPos(string& mv) {
 	return make_pair(r,f);
 }
 
-bool srcInferenceMatch(Piece *piece, MoveState& mvdata) {
+bool srcInferenceMatch(std::shared_ptr<Piece> piece, MoveState& mvdata) {
 	auto [sr, sf] = mvToPos(mvdata.src);
 	if (piece->rank == sr && piece->file == sf) {
 		if (mvdata.promotion) {
@@ -347,7 +348,7 @@ bool srcInferenceMatch(Piece *piece, MoveState& mvdata) {
 	return false;
 }
 
-bool srcRfInferenceMatch(Piece *piece, MoveState& mvdata, vector<vector<Piece*> >& board) {
+bool srcRfInferenceMatch(std::shared_ptr<Piece> piece, MoveState& mvdata, vector<vector<std::shared_ptr<Piece>> >& board) {
 	bool srcCond;
 	if (mvdata.hasFile) {
 		srcCond = fileToInt(mvdata.srcFile) == piece->file;	
@@ -370,22 +371,22 @@ bool srcRfInferenceMatch(Piece *piece, MoveState& mvdata, vector<vector<Piece*> 
 	return false;
 }
 
-bool genericInferenceMatch(Piece *piece, MoveState& mvdata, vector<vector<Piece*> >& board) {
+bool genericInferenceMatch(std::shared_ptr<Piece> piece, MoveState& mvdata, vector<vector<std::shared_ptr<Piece>> >& board) {
 	return board[piece->rank][piece->file] == piece && piece->name == mvdata.piece && legalMove(piece, board, mvdata.dest);
 }
 
-int16_t inferMvid(MoveState& mvdata, vector<vector<Piece*> >& board, vector<Piece*>& state, vector<Piece*> oppState) {
+int16_t inferMvid(MoveState& mvdata, vector<vector<std::shared_ptr<Piece>> >& board, vector<std::shared_ptr<Piece>>& state, vector<std::shared_ptr<Piece>> oppState) {
 	if (mvdata.castle != "") {
 		return castleToMvid(mvdata, board, state);
 	}
 
-	vector<Piece*> candidates;
+	vector<std::shared_ptr<Piece>> candidates;
 	
-	auto srcIm = [&](Piece *piece) { return srcInferenceMatch(piece, mvdata); };
-	auto srcRfIm = [&](Piece *piece) { return srcRfInferenceMatch(piece, mvdata, board); };
-	auto genIm = [&](Piece *piece) { return genericInferenceMatch(piece, mvdata, board); };
+	auto srcIm = [&](std::shared_ptr<Piece> piece) { return srcInferenceMatch(piece, mvdata); };
+	auto srcRfIm = [&](std::shared_ptr<Piece> piece) { return srcRfInferenceMatch(piece, mvdata, board); };
+	auto genIm = [&](std::shared_ptr<Piece> piece) { return genericInferenceMatch(piece, mvdata, board); };
 	
-	function<bool(Piece*)> cond;
+	function<bool(std::shared_ptr<Piece>)> cond;
 	if (mvdata.src != "") {
 		cond = srcIm;
 	} else if (mvdata.srcRank != '\0' || mvdata.srcFile != '\0') {
@@ -402,12 +403,12 @@ int16_t inferMvid(MoveState& mvdata, vector<vector<Piece*> >& board, vector<Piec
 
 	auto [dr, df] = mvToPos(mvdata.dest);
 
-	auto updateState = [&](Piece *piece, bool enpassant) {
+	auto updateState = [&](std::shared_ptr<Piece> piece, bool enpassant) {
 		auto [sr, sf] = piece->pos();	
 		piece->rank = dr;
 		piece->file = df;
 		board[sr][sf] = nullptr;
-		Piece *tmp;
+		std::shared_ptr<Piece> tmp;
 		if (enpassant) {
 			int tr = dr - piece->color;
 			tmp = board[tr][df];
@@ -422,7 +423,7 @@ int16_t inferMvid(MoveState& mvdata, vector<vector<Piece*> >& board, vector<Piec
 		return make_tuple(sr, sf, tmp);
 	};
 
-	auto revertState = [&](Piece *piece, int sr, int sf, Piece *tmp, bool enpassant) {
+	auto revertState = [&](std::shared_ptr<Piece> piece, int sr, int sf, std::shared_ptr<Piece> tmp, bool enpassant) {
 		board[sr][sf] = piece;
 		if (tmp) {
 			tmp->captured = false;
@@ -435,9 +436,9 @@ int16_t inferMvid(MoveState& mvdata, vector<vector<Piece*> >& board, vector<Piec
 		piece->file = sf;
 	};
 
-	Piece *piece;
+	std::shared_ptr<Piece> piece;
 	if (candidates.size() > 1) {
-		vector<Piece*> valid;
+		vector<std::shared_ptr<Piece>> valid;
 		for (auto piece: candidates) {
 			auto [sr, sf, tmp] = updateState(piece, mvdata.enpassant);
 			if (!kingInCheck(board, state, oppState)) {
@@ -464,7 +465,7 @@ MoveParser::MoveParser() {
 
 int16_t MoveParser::inferId(string& mv) {
 	MoveState mvdata = parseMove(mv, this->prevMv, this->color);
-	vector<Piece*> state, other;
+	vector<std::shared_ptr<Piece> > state, other;
 	if (this->color == COLORW) {
 		state = this->white;
 		other = this->black;
