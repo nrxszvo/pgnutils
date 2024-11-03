@@ -119,7 +119,7 @@ class PrintSafe:
             self.lock.release()
 
 
-def download_proc(url_q, zst_q, print_safe):
+def download_proc(pid, url_q, zst_q, print_safe):
     while True:
         url, npyname = url_q.get()
         if url == "DONE":
@@ -129,7 +129,7 @@ def download_proc(url_q, zst_q, print_safe):
         if not os.path.exists(zst):
             if not os.path.exists(zst):
                 while zst_q.qsize() > 2:
-                    print_safe("download proc is sleeping...")
+                    print_safe(f"download proc {pid} is sleeping...")
                     time.sleep(5 * 60)
                 print_safe(f"{npyname}: downloading...")
                 _, time_str = timeit(
@@ -141,8 +141,8 @@ def download_proc(url_q, zst_q, print_safe):
 
 def start_download_procs(url_q, zst_q, print_safe, nproc):
     procs = []
-    for _ in range(nproc):
-        p = Process(target=download_proc, args=((url_q, zst_q, print_safe)))
+    for pid in range(nproc):
+        p = Process(target=download_proc, args=((pid, url_q, zst_q, print_safe)))
         p.daemon = True
         p.start()
         procs.append(p)
@@ -197,29 +197,40 @@ def main(
                 p = subprocess.Popen(cmd)
                 active_procs.append((p, tmpdir, npyname, zst_fn))
 
-            if len(active_procs) == 2 or (terminate and len(active_procs) > 0):
-                to_remove = []
-                while len(to_remove) == 0:
-                    for i, (p, tmpdir, name, zst) in enumerate(active_procs):
-                        if p.poll() is not None:
-                            nmoves = write_npys(tmpdir.name, npy_dir, name)
-                            if nmoves == 0:
-                                print(
-                                    "Last archive contained zero moves: terminating..."
-                                )
-                                terminate = True
-                            to_remove.append(i)
-                            os.remove(zst)
-                            tmpdir.cleanup()
+            def check_cleanup(p, tmpdir, name, zst):
+                finished = False
+                nmoves = None
+                if p.poll() is not None:
+                    print(f"{name}: writing to file...")
+                    nmoves, timestr = timeit(
+                        lambda: write_npys(tmpdir.name, npy_dir, name)
+                    )
+                    print(f"{name}: finished writing in {timestr}")
+                    os.remove(zst)
+                    tmpdir.cleanup()
+                    finished = True
+                return finished, nmoves
 
-                for i in to_remove:
-                    active_procs.remove(active_procs[i])
+            while len(active_procs) == 2 or (terminate and len(active_procs) > 0):
+                for procdata in reversed(active_procs):
+                    finished, nmoves = check_cleanup(*procdata)
+                    if finished:
+                        if nmoves == 0:
+                            terminate = True
+                            print(
+                                "Last archive contained no moves, 'terminate' signaled"
+                            )
+                        active_procs.remove(procdata)
 
             if terminate and len(active_procs) == 0:
                 break
 
     finally:
         print_safe("cleaning up...")
+        for p, tmpdir, _, zst in active_procs:
+            p.kill()
+            tmpdir.cleanup()
+            os.remove(zst)
         url_q.close()
         zst_q.close()
         for dl_p in dl_ps:

@@ -326,10 +326,14 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name, int printF
 			int totalGamesEst = ngames / ((float)maxBytes / nbytes);
 			int curProg = int(100.0f * ngames / totalGamesEst);
 			if (ellapsedGTE(lastPrintTime, printFreq)) {
-				std::string eta = getEta(totalGamesEst, ngames, start);
+				auto [eta, ellapsed] = getEta(totalGamesEst, ngames, start);
+				int gamesPerSec = 1000*ngames/ellapsed;
+				int mbps = 1000*maxBytes/ellapsed/(1024*1024);
 				std::string status = name + ": parsed " + std::to_string(ngames) + \
 									 " games (" + std::to_string(curProg) + \
-									 "% done, eta: " + eta + ")";
+									 "% done, MB/sec: " + std::to_string(mbps) + \
+									 ", games/sec: " + std::to_string(gamesPerSec) + \
+									 ", eta: " + eta + ")";
 				std::cout << status << std::endl;
 				lastPrintTime = hrc::now();
 			}

@@ -62,7 +62,7 @@ ParserOutput processSerial(std::string zst) {
 				int curProg = int((100.0f / printFreq) * ngames / totalGamesEst);
 				if (curProg > progress) {
 					progress = curProg;
-					std::string eta = getEta(totalGamesEst, ngames, start);
+					auto [eta, gamesPerSec] = getEta(totalGamesEst, ngames, start);
 					std::string status = "parsed " + std::to_string(ngames) + \
 										 " games (" + std::to_string(printFreq*progress) + \
 										 "% done, eta: " + eta + ")";
