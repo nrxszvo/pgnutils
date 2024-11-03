@@ -130,7 +130,7 @@ def download_proc(url_q, zst_q, print_safe):
             if not os.path.exists(zst):
                 while zst_q.qsize() > 2:
                     print_safe("download proc is sleeping...")
-                    time.sleep(60)
+                    time.sleep(5 * 60)
                 print_safe(f"{npyname}: downloading...")
                 _, time_str = timeit(
                     lambda: wget.download(url, bar=lambda a, b, c: None)
