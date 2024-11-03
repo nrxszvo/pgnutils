@@ -175,7 +175,7 @@ struct ReaderState {
 };
 
 
-void processGames(ReaderState ts) {		
+void processGames(ReaderState ts, bool requireClk) {		
 	while(true) {
 		std::shared_ptr<GameData> gd;
 		{
@@ -196,7 +196,7 @@ void processGames(ReaderState ts) {
 			break;
 		} else {
 			try {
-				auto [mvids, clk] = parseMoves(gd->moveStr);
+				auto [mvids, clk] = parseMoves(gd->moveStr, requireClk);
 				auto errs = validateGame(gd->gameId, gd->moveStr, mvids);
 				{
 					std::lock_guard<std::mutex> lock(*ts.outputMtx);
@@ -222,18 +222,19 @@ std::vector<std::shared_ptr<std::thread> >  startReaderThreads(
 		std::mutex& gamesMtx, 
 		std::mutex& outputMtx,
 	   	std::condition_variable& gamesCv, 
-		std::condition_variable& outputCv) {
+		std::condition_variable& outputCv,
+		bool requireClk) {
 
 	std::vector<std::shared_ptr<std::thread> > threads;
 	ReaderState ts(&gamesQ, &outputQ, &gamesMtx, &outputMtx, &gamesCv, &outputCv);
 	for (int i=0; i<nReaders; i++) {
 		ts.pid = i;
-		threads.push_back(std::make_shared<std::thread>(processGames, ts));
+		threads.push_back(std::make_shared<std::thread>(processGames, ts, requireClk));
 	}	
 	return threads;
 }
 
-ParallelParser::ParallelParser(int nReaders) : nReaders(nReaders) {
+ParallelParser::ParallelParser(int nReaders, bool requireClk) : nReaders(nReaders) {
 	this->readerThreads = startReaderThreads(
 		nReaders, 
 		this->gamesQ, 
@@ -241,7 +242,8 @@ ParallelParser::ParallelParser(int nReaders) : nReaders(nReaders) {
 		this->gamesMtx,
 		this->outputMtx,
 		this->gamesCv,
-		this->outputCv
+		this->outputCv,
+		requireClk
 	);
 	this->gameThread = startGamesReader(
 		this->pgnQ, 

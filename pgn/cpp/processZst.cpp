@@ -19,6 +19,7 @@ ABSL_FLAG(std::string, outdir, ".", "output directory to store npy output files"
 ABSL_FLAG(bool, serial, false, "Disable parallel processing");
 ABSL_FLAG(int, printFreq, 60, "Print status every printFreq seconds");
 ABSL_FLAG(int, nReaders, std::thread::hardware_concurrency()-1, "Number of readers for parallel processing");
+ABSL_FLAG(bool, allowNoClock, false, "Allow games with no clock time data to be included");
 
 void writeNpy(std::string outdir, ParserOutput& res) {
 
@@ -56,7 +57,7 @@ int main(int argc, char *argv[]) {
 	if (absl::GetFlag(FLAGS_serial)) {
 		res = processSerial(absl::GetFlag(FLAGS_zst));
 	} else {
-		ParallelParser parser(absl::GetFlag(FLAGS_nReaders));
+		ParallelParser parser(absl::GetFlag(FLAGS_nReaders), !absl::GetFlag(FLAGS_allowNoClock));
 		res = parser.parse(absl::GetFlag(FLAGS_zst), name, absl::GetFlag(FLAGS_printFreq));
 	}
 	writeNpy(absl::GetFlag(FLAGS_outdir), res);

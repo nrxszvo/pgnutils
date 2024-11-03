@@ -70,7 +70,7 @@ class ParallelParser {
 	std::vector<std::shared_ptr<std::thread> > readerThreads;
 	std::shared_ptr<std::thread> gameThread;
 public:
-	ParallelParser(int nReaders);
+	ParallelParser(int nReaders, bool requireClk);
 	~ParallelParser();
 	ParserOutput parse(std::string pgn, std::string name, int printFreq=60);
 };
