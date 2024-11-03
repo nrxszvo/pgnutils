@@ -18,6 +18,7 @@ ABSL_FLAG(std::string, name, "", "human-readable name for archive");
 ABSL_FLAG(std::string, outdir, ".", "output directory to store npy output files");
 ABSL_FLAG(bool, serial, false, "Disable parallel processing");
 ABSL_FLAG(int, printFreq, 60, "Print status every printFreq seconds");
+ABSL_FLAG(int, nReaders, std::thread::hardware_concurrency()-1, "Number of readers for parallel processing");
 
 void writeNpy(std::string outdir, ParserOutput& res) {
 
@@ -50,15 +51,17 @@ int main(int argc, char *argv[]) {
 	absl::ParseCommandLine(argc, argv);
 	auto start = std::chrono::high_resolution_clock::now();
 	ParserOutput res;
+	std::string name = absl::GetFlag(FLAGS_name);
+
 	if (absl::GetFlag(FLAGS_serial)) {
 		res = processSerial(absl::GetFlag(FLAGS_zst));
 	} else {
-		ParallelParser parser(std::thread::hardware_concurrency()-1);
-		res = parser.parse(absl::GetFlag(FLAGS_zst), absl::GetFlag(FLAGS_name), absl::GetFlag(FLAGS_printFreq));
+		ParallelParser parser(absl::GetFlag(FLAGS_nReaders));
+		res = parser.parse(absl::GetFlag(FLAGS_zst), name, absl::GetFlag(FLAGS_printFreq));
 	}
 	writeNpy(absl::GetFlag(FLAGS_outdir), res);
 	auto stop = std::chrono::high_resolution_clock::now();
-	std::cout << std::endl << "Total processing time: " << getEllapsedStr(start, stop) << std::endl;
+	std::cout << name << " finished parsing in " << getEllapsedStr(start, stop) << std::endl;
 	profiler.report();
 	return 0;
 }
