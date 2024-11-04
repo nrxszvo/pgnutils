@@ -8,7 +8,7 @@
 
 ParserOutput processSerial(std::string zst) {
 
-	DecompressStream decompressor(zst);
+	DecompressStream decompressor(zst,0,0);
 	PgnProcessor processor;
 
 	int gamestart = 0;
@@ -35,7 +35,7 @@ ParserOutput processSerial(std::string zst) {
 
 	auto start = hrc::now();
 	while((bytesRead = decompressor.decompressFrame()) != 0) {
-		std::vector<std::string> lines = decompressor.getOutput();
+		std::vector<std::string> lines = decompressor.getLines();
 		bytesProcessed += bytesRead;
 		for (auto line: lines) {
 			lineno++;

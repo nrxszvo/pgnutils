@@ -4,7 +4,7 @@
 #include <sstream>
 #include <vector>
 
-void test();
+std::vector<size_t> getFrameBoundaries(std::string zst, int nBoundaries);
 
 class DecompressStream {	
 	ZSTD_DCtx* dctx;
@@ -16,11 +16,14 @@ class DecompressStream {
 	std::stringstream ss;
 	size_t zstdRet;
 	size_t frameSize;
+	size_t maxBytes;
+	size_t totalRead;
 	std::string rem;
 public:
-	DecompressStream(std::string zstfn, size_t frameSize=1024*1024);
+	DecompressStream(std::string zstfn, size_t frameStart, size_t frameEnd, size_t frameSize=1024*1024);
 	~DecompressStream();
 	std::streamsize decompressFrame();
-	std::vector<std::string> getOutput();
+	std::vector<std::string> getLines();
 	size_t getFrameSize();
+	float getProgress();
 };	

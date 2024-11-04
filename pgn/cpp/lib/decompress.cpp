@@ -1,17 +1,43 @@
-#include "decompress.h"
 #include <cstdlib>
-#include <fstream>
 #include <stdexcept>
-#include <sstream>
-#include <iostream>
 #include <string>
+#include <filesystem>
+#include "decompress.h"
 #include "profiling/profiler.h"
 
-DecompressStream::DecompressStream(std::string zstfn, size_t frameSize) : frameSize(frameSize), rem("") {
+#define MAGIC 0xFD2FB528
+
+std::vector<size_t> getFrameBoundaries(std::string zst, int nBoundaries) {		
+	std::vector<size_t> offsets;
+	size_t nbytes = std::filesystem::file_size(zst);		
+	std::ifstream infile(zst, std::ios::binary);
+	int buffer;
+	for (int i=0; i<nBoundaries; i++) {
+		size_t offset = i*nbytes/nBoundaries;
+		infile.seekg(offset, infile.beg);
+		while(true) {
+			infile.read((char*)(&buffer), 4);
+			if (infile.gcount() <= 0) break;
+			else if (buffer == MAGIC) {
+				offsets.push_back(offset);
+				break;
+			}
+			offset += 4;
+		}	
+	}
+	infile.close();
+	offsets.push_back(nbytes);
+	return offsets;
+}
+
+DecompressStream::DecompressStream(std::string zstfn, size_t frameStart, size_t frameEnd, size_t frameSize) : frameSize(frameSize), rem("") {
+	maxBytes = (frameEnd-frameStart);
+	totalRead = 0;
 	in = {.src = NULL};
     out = {.dst = NULL};
 
 	infile = std::ifstream(zstfn, std::ios::binary);	
+	infile.seekg(frameStart, infile.beg);
 
  	in_mem = (char*)malloc(frameSize);	
 	in.src = in_mem;
@@ -34,9 +60,13 @@ DecompressStream::~DecompressStream() {
 }
 
 std::streamsize DecompressStream::decompressFrame() {
+	if (totalRead >= maxBytes) return 0;
+
 	profiler.start("decompress");
-	infile.read(static_cast<char*>(in_mem), frameSize);
+	size_t bytesToRead = std::min(frameSize, maxBytes-totalRead);
+	infile.read(static_cast<char*>(in_mem), bytesToRead);
 	std::streamsize bytesRead = infile.gcount();
+	totalRead += bytesRead;
 	if (bytesRead < 0) throw std::runtime_error("bytesRead < 0");
 	in.size = bytesRead;
 	in.pos = 0;
@@ -60,7 +90,7 @@ std::streamsize DecompressStream::decompressFrame() {
 	return bytesRead;
 }
 
-std::vector<std::string> DecompressStream::getOutput() {
+std::vector<std::string> DecompressStream::getLines() {
 	std::string frame = ss.str();
 	ss.str(std::string());
 
@@ -94,9 +124,7 @@ size_t DecompressStream::getFrameSize() {
 	return frameSize;
 }
 
-void test() {
-	DecompressStream decompressor("../../lichess_db_standard_rated_2013-01.pgn.zst");
-	while ((decompressor.decompressFrame()) != 0) {
-		std::vector<std::string> lines = decompressor.getOutput();
-	}
+float DecompressStream::getProgress() {
+	return (float)totalRead / (float)maxBytes;
 }
+

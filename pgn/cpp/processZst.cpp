@@ -18,7 +18,8 @@ ABSL_FLAG(std::string, name, "", "human-readable name for archive");
 ABSL_FLAG(std::string, outdir, ".", "output directory to store npy output files");
 ABSL_FLAG(bool, serial, false, "Disable parallel processing");
 ABSL_FLAG(int, printFreq, 60, "Print status every printFreq seconds");
-ABSL_FLAG(int, nReaders, std::thread::hardware_concurrency()-1, "Number of readers for parallel processing");
+ABSL_FLAG(int, nReaders, std::thread::hardware_concurrency()-1, "Number of zst/pgn readers for parallel processing");
+ABSL_FLAG(int, nMoveProcessors, 1, "Number of game parsers for parallel processing");
 ABSL_FLAG(bool, allowNoClock, false, "Allow games with no clock time data to be included");
 
 void writeNpy(std::string outdir, ParserOutput& res) {
@@ -54,11 +55,20 @@ int main(int argc, char *argv[]) {
 	ParserOutput res;
 	std::string name = absl::GetFlag(FLAGS_name);
 
+
+
 	if (absl::GetFlag(FLAGS_serial)) {
 		res = processSerial(absl::GetFlag(FLAGS_zst));
 	} else {
-		ParallelParser parser(absl::GetFlag(FLAGS_nReaders), !absl::GetFlag(FLAGS_allowNoClock));
-		res = parser.parse(absl::GetFlag(FLAGS_zst), name, absl::GetFlag(FLAGS_printFreq));
+		ParallelParser parser(
+				absl::GetFlag(FLAGS_nReaders),
+			   	absl::GetFlag(FLAGS_nMoveProcessors)
+				);
+		res = parser.parse(absl::GetFlag(FLAGS_zst), 
+				name,
+			   	!absl::GetFlag(FLAGS_allowNoClock),
+			   	absl::GetFlag(FLAGS_printFreq)
+				);
 	}
 	writeNpy(absl::GetFlag(FLAGS_outdir), res);
 	auto stop = std::chrono::high_resolution_clock::now();

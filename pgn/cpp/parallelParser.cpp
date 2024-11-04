@@ -3,166 +3,89 @@
 #include "lib/parseMoves.h"
 #include "lib/validate.h"
 #include "lib/utils.h"
-#include <fstream>
+#include <memory>
 #include <stdexcept>
 #include <thread>
-#include <filesystem>
 #include <chrono>
 #include <iostream>
-
-namespace fs = std::filesystem;
+#include <unordered_set>
 
 struct GameState {
-	std::queue<std::string> *pgnQ;
 	std::queue<std::shared_ptr<GameData> >* gamesQ;
-	std::mutex* pgnMtx;
 	std::mutex* gamesMtx;
-	std::condition_variable* pgnCv;
 	std::condition_variable* gamesCv;
+	int pid;
 	GameState(
-			std::queue<std::string>* pgnQ, 
 			std::queue<std::shared_ptr<GameData> >* gamesQ, 
-			std::mutex* pgnMtx,
 			std::mutex* gamesMtx, 
-			std::condition_variable* pgnCv,
 			std::condition_variable* gamesCv) 
-		: pgnQ(pgnQ), gamesQ(gamesQ), pgnMtx(pgnMtx), gamesMtx(gamesMtx), pgnCv(pgnCv), gamesCv(gamesCv) {};
+		: pid(-1), gamesQ(gamesQ), gamesMtx(gamesMtx), gamesCv(gamesCv) {};
 
 };
 
-void loadGamesZst(GameState gs, int nReaders) {
-	while(true) {
-		std::string zst;
-		{
-			std::unique_lock<std::mutex> lock(*gs.pgnMtx);
-			gs.pgnCv->wait(lock, [&] { return !gs.pgnQ->empty(); });
-			zst = gs.pgnQ->front();
-			gs.pgnQ->pop();
-			lock.unlock();
-		}
-		if (zst == "DONE") {
-			{
-				std::lock_guard<std::mutex> lock(*gs.gamesMtx);
-				for (int i=0; i<nReaders; i++) {
-					gs.gamesQ->push(std::make_shared<GameData>("SESSION_DONE"));
-				}
-			}
-			gs.gamesCv->notify_all();
-			break;
-		} else {
-			uintmax_t bytesProcessed = 0;
-			int gameId = 0;
-			int gamestart = 0;
-			int lineno = 0;
-			PgnProcessor processor;
-			DecompressStream decompressor(zst);
-			while(decompressor.decompressFrame() != 0) {
-				std::vector<std::string> lines = decompressor.getOutput();
-				bytesProcessed += decompressor.getFrameSize();
-				for (auto line: lines) {
-					lineno++;
-					std::string code = processor.processLine(line);
-					if (code == "COMPLETE") {
-						{
-							std::lock_guard<std::mutex> lock(*gs.gamesMtx);
-							gs.gamesQ->push(std::make_shared<GameData>(
-									bytesProcessed, 
-									gameId, 
-									processor.getWelo(), 
-									processor.getBelo(), 
-									processor.getMoveStr(),
-									zst + ":" + std::to_string(gamestart)
-								));
-						}
-						gs.gamesCv->notify_one();
-						gamestart = lineno + 1;
-						gameId++;
-					}
-				}
-			}	
-			{
-				std::lock_guard<std::mutex> lock(*gs.gamesMtx);
-				for (int i=0; i<nReaders; i++) {
-					gs.gamesQ->push(std::make_shared<GameData>("FILE_DONE", gameId));
-				}
-			}
-			gs.gamesCv->notify_all();
-		}
-	}
-}
-
-void loadGames(GameState gs, int nReaders) {
-	while(true) {
-		std::string pgn;
-		{
-			std::unique_lock<std::mutex> lock(*gs.pgnMtx);
-			gs.pgnCv->wait(lock, [&] { return !gs.pgnQ->empty(); });
-			pgn = gs.pgnQ->front();
-			gs.pgnQ->pop();
-			lock.unlock();
-		}
-		if (pgn == "DONE") {
-			{
-				std::lock_guard<std::mutex> lock(*gs.gamesMtx);
-				for (int i=0; i<nReaders; i++) {
-					gs.gamesQ->push(std::make_shared<GameData>("SESSION_DONE"));
-				}
-			}
-			gs.gamesCv->notify_all();
-			break;
-		} else {
-			uintmax_t bytesProcessed = 0;
-			int gameId = 0;
-			int gamestart = 0;
-			int lineno = 0;
-			std::ifstream infile(pgn);
-			std::string line;
-			PgnProcessor processor;
-			while (std::getline(infile, line)) {
-				lineno++;
-				bytesProcessed += line.size();
-				std::string code = processor.processLine(line);
-				if (code == "COMPLETE") {
-					{
-						std::lock_guard<std::mutex> lock(*gs.gamesMtx);
-						gs.gamesQ->push(std::make_shared<GameData>(
-								bytesProcessed, 
+void loadGamesZst(GameState gs, std::string zst, size_t frameStart, size_t frameEnd, int nMoveProcessors) {
+	int gameId = 0;
+	int gamestart = 0;
+	int lineno = 0;
+	PgnProcessor processor;
+	DecompressStream decompressor(zst, frameStart, frameEnd);
+	while(decompressor.decompressFrame() != 0) {
+		std::vector<std::string> lines = decompressor.getLines();
+		for (auto line: lines) {
+			lineno++;
+			std::string code = processor.processLine(line);
+			if (code == "COMPLETE") {
+				{
+					std::lock_guard<std::mutex> lock(*gs.gamesMtx);
+					gs.gamesQ->push(std::make_shared<GameData>(
+								gs.pid,
+								decompressor.getProgress(),
 								gameId, 
 								processor.getWelo(), 
 								processor.getBelo(), 
 								processor.getMoveStr(),
-								pgn + ":" + std::to_string(gamestart)
+								zst + ":" + std::to_string(gamestart)
 							));
-					}
-					gs.gamesCv->notify_one();
-					gamestart = lineno + 1;
-					gameId++;
 				}
-			}	
-			{
-				std::lock_guard<std::mutex> lock(*gs.gamesMtx);
-				for (int i=0; i<nReaders; i++) {
-					gs.gamesQ->push(std::make_shared<GameData>("FILE_DONE", gameId));
-				}
+				gs.gamesCv->notify_one();
+				gamestart = lineno + 1;
+				gameId++;
 			}
-			gs.gamesCv->notify_all();
+		}
+	}	
+	{
+		std::lock_guard<std::mutex> lock(*gs.gamesMtx);
+		for (int i=0; i<nMoveProcessors; i++) {
+			gs.gamesQ->push(std::make_shared<GameData>(gs.pid, "FILE_DONE", gameId));
 		}
 	}
+	gs.gamesCv->notify_all();
 }
 
-std::shared_ptr<std::thread> startGamesReader(
-		std::queue<std::string>& pgnQ, 
+
+std::vector<std::shared_ptr<std::thread> > startGamesReader(
 		std::queue<std::shared_ptr<GameData> >& gamesQ, 
-		std::mutex& pgnMtx,
 		std::mutex& gamesMtx,
-		std::condition_variable& pgnCv,
 	   	std::condition_variable& gamesCv,
-	   	int nReaders) {
-	GameState gs(&pgnQ, &gamesQ, &pgnMtx, &gamesMtx, &pgnCv, &gamesCv);
-	return std::make_shared<std::thread>(loadGamesZst, gs, nReaders);
+		std::string zst,
+		std::vector<size_t>& frameBoundaries,
+	   	int nMoveProcessors) {
+	GameState gs(&gamesQ, &gamesMtx, &gamesCv);
+	std::vector<std::shared_ptr<std::thread> > procs;
+	for (int i=0; i<frameBoundaries.size()-1; i++) {
+		size_t start = frameBoundaries[i];
+		size_t end = frameBoundaries[i+1];
+		gs.pid = i;
+		procs.push_back(
+				std::make_shared<std::thread>(
+					loadGamesZst, gs, zst, start, end, nMoveProcessors
+					)
+				);
+	}
+	return procs;
 }
 
-struct ReaderState {
+struct ProcessorState {
 	std::queue<std::shared_ptr<GameData> >* gamesQ;
 	std::queue<std::shared_ptr<MoveData> >* outputQ;
 	int pid;
@@ -170,52 +93,76 @@ struct ReaderState {
 	std::mutex* outputMtx;
 	std::condition_variable* gamesCv;
 	std::condition_variable* outputCv;
-	ReaderState(std::queue<std::shared_ptr<GameData> >* gamesQ, std::queue<std::shared_ptr<MoveData> >* outputQ, std::mutex* gamesMtx, std::mutex* outputMtx, std::condition_variable* gamesCv, std::condition_variable* outputCv) 
-		: gamesQ(gamesQ), outputQ(outputQ), pid(-1), gamesMtx(gamesMtx), outputMtx(outputMtx), gamesCv(gamesCv), outputCv(outputCv) {};
+	ProcessorState(
+			std::queue<std::shared_ptr<GameData> >* gamesQ, 
+			std::queue<std::shared_ptr<MoveData> >* outputQ, 
+			std::mutex* gamesMtx, 
+			std::mutex* outputMtx,
+		   	std::condition_variable* gamesCv,
+		   	std::condition_variable* outputCv) 
+		: gamesQ(gamesQ), 
+		outputQ(outputQ),
+	   	pid(-1),
+	   	gamesMtx(gamesMtx),
+	   	outputMtx(outputMtx),
+	   	gamesCv(gamesCv),
+	   	outputCv(outputCv) {};
 };
 
-
-void processGames(ReaderState ts, bool requireClk) {		
+void processGames(ProcessorState ps, int nReaders, bool requireClk) {		
+	int nReadersDone = 0;
+	std::unordered_set<int> readerPids;
+	int totalGames = 0;
 	while(true) {
 		std::shared_ptr<GameData> gd;
 		{
-			std::unique_lock<std::mutex> lock(*ts.gamesMtx);
-			ts.gamesCv->wait(lock, [&]{return !ts.gamesQ->empty();});
-			gd = ts.gamesQ->front();
-			ts.gamesQ->pop();
+			std::unique_lock<std::mutex> lock(*ps.gamesMtx);
+			ps.gamesCv->wait(lock, [&]{return !ps.gamesQ->empty();});
+			gd = ps.gamesQ->front();
+			if (gd->info == "FILE_DONE") {
+				if (!readerPids.contains(gd->pid)) {
+					readerPids.insert(gd->pid);
+					nReadersDone++;
+					totalGames += gd->gameId;
+					ps.gamesQ->pop();
+				}
+			} else {
+				ps.gamesQ->pop();
+			}
 			lock.unlock();
 		}
 		if (gd->info == "FILE_DONE") {
-			std::lock_guard<std::mutex> lock(*ts.outputMtx);
-			ts.outputQ->push(std::make_shared<MoveData>("DONE", gd->gameId));
-			ts.outputCv->notify_one();
-		} else if (gd->info == "SESSION_DONE") {
-			std::lock_guard<std::mutex> lock(*ts.outputMtx);
-			ts.outputQ->push(std::make_shared<MoveData>("SESSION_DONE"));
-			ts.outputCv->notify_one();
-			break;
+			if (nReadersDone==nReaders) {
+				std::lock_guard<std::mutex> lock(*ps.outputMtx);
+				ps.outputQ->push(std::make_shared<MoveData>(ps.pid, "DONE", totalGames));
+				ps.outputCv->notify_one();
+				break;
+			}
 		} else {
 			try {
 				auto [mvids, clk] = parseMoves(gd->moveStr, requireClk);
 				auto errs = validateGame(gd->gameId, gd->moveStr, mvids);
 				{
-					std::lock_guard<std::mutex> lock(*ts.outputMtx);
+					std::lock_guard<std::mutex> lock(*ps.outputMtx);
 					if (errs.empty()) {
-						ts.outputQ->push(std::make_shared<MoveData>(ts.pid, gd, mvids, clk));
+						ps.outputQ->push(
+								std::make_shared<MoveData>(gd->pid, gd, mvids, clk)
+								);
 					} else {
-						ts.outputQ->push(std::make_shared<MoveData>(errs));
+						ps.outputQ->push(std::make_shared<MoveData>(errs));
 					}
-					ts.outputCv->notify_one();
+					ps.outputCv->notify_one();
 				}
 			} catch(std::exception &e) {
-				std::lock_guard<std::mutex> lock(*ts.outputMtx);
-				ts.outputQ->push(std::make_shared<MoveData>("INVALID"));
+				std::lock_guard<std::mutex> lock(*ps.outputMtx);
+				ps.outputQ->push(std::make_shared<MoveData>(gd->pid, "INVALID"));
 			}
 		}	
 	}
 }
 
-std::vector<std::shared_ptr<std::thread> >  startReaderThreads(
+std::vector<std::shared_ptr<std::thread> >  startProcessorThreads(
+		int nMoveProcessors,
 		int nReaders, 
 		std::queue<std::shared_ptr<GameData> >& gamesQ, 
 		std::queue<std::shared_ptr<MoveData> >& outputQ, 
@@ -226,66 +173,27 @@ std::vector<std::shared_ptr<std::thread> >  startReaderThreads(
 		bool requireClk) {
 
 	std::vector<std::shared_ptr<std::thread> > threads;
-	ReaderState ts(&gamesQ, &outputQ, &gamesMtx, &outputMtx, &gamesCv, &outputCv);
-	for (int i=0; i<nReaders; i++) {
-		ts.pid = i;
-		threads.push_back(std::make_shared<std::thread>(processGames, ts, requireClk));
+	ProcessorState ps(&gamesQ, &outputQ, &gamesMtx, &outputMtx, &gamesCv, &outputCv);
+	for (int i=0; i<nMoveProcessors; i++) {
+		ps.pid = i;
+		threads.push_back(std::make_shared<std::thread>(processGames, ps, nReaders, requireClk));
 	}	
 	return threads;
 }
 
-ParallelParser::ParallelParser(int nReaders, bool requireClk) : nReaders(nReaders) {
-	this->readerThreads = startReaderThreads(
-		nReaders, 
-		this->gamesQ, 
-		this->outputQ, 
-		this->gamesMtx,
-		this->outputMtx,
-		this->gamesCv,
-		this->outputCv,
-		requireClk
-	);
-	this->gameThread = startGamesReader(
-		this->pgnQ, 
-		this->gamesQ, 
-		this->pgnMtx,
-		this->gamesMtx, 
-		this->pgnCv,
-		this->gamesCv, 
-		nReaders
-	);
-};
+ParallelParser::ParallelParser(int nReaders, int nMoveProcessors) 
+	: nReaders(nReaders), nMoveProcessors(nMoveProcessors) {};
 
 ParallelParser::~ParallelParser() {
-	{
-		std::lock_guard<std::mutex> lock(this->pgnMtx);
-		this->pgnQ.push("DONE");
-		this->pgnCv.notify_one();
+	for (auto gt: gameThreads) {
+		gt->join();
 	}
-	{
-		std::unique_lock<std::mutex> lock(this->outputMtx);
-		this->outputCv.wait(lock, [&]{return this->outputQ.size()==this->nReaders;});
-		for (int i=0; i<this->nReaders; i++) {
-			this->outputQ.pop();
-		}
-		lock.unlock();
-	}
-
-	this->gameThread->join();
-	for (auto rt: this->readerThreads) {
+	for (auto rt: procThreads) {
 		rt->join();
 	}
 }
 
-ParserOutput ParallelParser::parse(std::string pgn, std::string name, int printFreq) {
-	uintmax_t nbytes = fs::file_size(pgn);	
-	{
-		std::unique_lock<std::mutex> lock(this->pgnMtx);
-		this->pgnQ.push(pgn);
-		this->pgnCv.notify_one();
-		lock.unlock();
-	}
-
+ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requireClk, int printFreq) {
 	auto welos = std::make_shared<std::vector<int16_t> >();
 	auto belos = std::make_shared<std::vector<int16_t> >();
 	auto gamestarts = std::make_shared<std::vector<int64_t> >();
@@ -295,16 +203,38 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name, int printF
 	int64_t ngames = 0;
 	int totalGames = INT_MAX;
 	int nFinished = 0;
-	size_t maxBytes = 0;
+	
+	procThreads = startProcessorThreads(
+		nMoveProcessors,
+		nReaders, 
+		gamesQ, 
+		outputQ, 
+		gamesMtx,
+		outputMtx,
+		gamesCv,
+		outputCv,
+		requireClk
+	);
+
+	std::vector<size_t> frameBoundaries	= getFrameBoundaries(zst, nReaders);
+	gameThreads = startGamesReader(
+		gamesQ, 
+		gamesMtx, 
+		gamesCv, 
+		zst,
+		frameBoundaries,
+		nMoveProcessors
+	);
+
 	auto start = hrc::now();
 	auto lastPrintTime = start;
-	while (ngames < totalGames || nFinished < this->nReaders) {
+	while (ngames < totalGames || nFinished < nMoveProcessors) {
 		std::shared_ptr<MoveData> md;
 		{
-			std::unique_lock<std::mutex> lock(this->outputMtx);
-			this->outputCv.wait(lock, [&]{return !this->outputQ.empty();});
-			md = this->outputQ.front();
-			this->outputQ.pop();
+			std::unique_lock<std::mutex> lock(outputMtx);
+			outputCv.wait(lock, [&]{return !outputQ.empty();});
+			md = outputQ.front();
+			outputQ.pop();
 			lock.unlock();
 		}
 		if (md->info == "DONE") {
@@ -315,7 +245,6 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name, int printF
 		} else if (md->info == "INVALID") {
 			ngames++;
 		} else if (md->info == "GAME") {
-			maxBytes = std::max(maxBytes, md->bytesProcessed);	
 			welos->push_back(md->welo);
 			belos->push_back(md->belo);
 			gamestarts->push_back(mvids->size());
@@ -323,16 +252,14 @@ ParserOutput ParallelParser::parse(std::string pgn, std::string name, int printF
 			clktimes->insert(clktimes->end(), md->clk.begin(), md->clk.end());
 			ngames++;
 			
-			int totalGamesEst = ngames / ((float)maxBytes / nbytes);
-			int curProg = int(100.0f * ngames / totalGamesEst);
+			int totalGamesEst = ngames / md->progress;
 			if (ellapsedGTE(lastPrintTime, printFreq)) {
 				auto [eta, ellapsed] = getEta(totalGamesEst, ngames, start);
 				int gamesPerSec = 1000*ngames/ellapsed;
-				int mbps = 1000*maxBytes/ellapsed/(1024*1024);
 				std::string status = name + ": parsed " + std::to_string(ngames) + \
-									 " games (" + std::to_string(curProg) + \
-									 "% done, MB/sec: " + std::to_string(mbps) + \
-									 ", games/sec: " + std::to_string(gamesPerSec) + \
+									 " games (pid " + std::to_string(md->pid) + " " + std::to_string(int(100*md->progress)) + \
+									 "% done, games/sec: " + \
+									 std::to_string(gamesPerSec) + \
 									 ", eta: " + eta + ")";
 				std::cout << status << std::endl;
 				lastPrintTime = hrc::now();
