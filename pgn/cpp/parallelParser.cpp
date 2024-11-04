@@ -204,6 +204,9 @@ ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requi
 	int totalGames = INT_MAX;
 	int nFinished = 0;
 	
+	std::vector<size_t> frameBoundaries = getFrameBoundaries(zst, nReaders);
+	nReaders = frameBoundaries.size()-1;
+
 	procThreads = startProcessorThreads(
 		nMoveProcessors,
 		nReaders, 
@@ -216,7 +219,6 @@ ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requi
 		requireClk
 	);
 
-	std::vector<size_t> frameBoundaries	= getFrameBoundaries(zst, nReaders);
 	gameThreads = startGamesReader(
 		gamesQ, 
 		gamesMtx, 
