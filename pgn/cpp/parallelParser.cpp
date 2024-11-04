@@ -30,7 +30,8 @@ void loadGamesZst(GameState gs, std::string zst, size_t frameStart, size_t frame
 	PgnProcessor processor;
 	DecompressStream decompressor(zst, frameStart, frameEnd);
 	while(decompressor.decompressFrame() != 0) {
-		std::vector<std::string> lines = decompressor.getLines();
+		std::vector<std::string> lines;
+		decompressor.getLines(lines);
 		for (auto line: lines) {
 			lineno++;
 			std::string code = processor.processLine(line);
@@ -201,6 +202,7 @@ ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requi
 	auto clktimes = std::make_shared<std::vector<int16_t> >();
 
 	int64_t ngames = 0;
+	int64_t nGamesLastUpdate = 0;
 	int totalGames = INT_MAX;
 	int nFinished = 0;
 	
@@ -256,15 +258,18 @@ ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requi
 			
 			int totalGamesEst = ngames / md->progress;
 			if (ellapsedGTE(lastPrintTime, printFreq)) {
-				auto [eta, ellapsed] = getEta(totalGamesEst, ngames, start);
-				int gamesPerSec = 1000*ngames/ellapsed;
+				auto [eta, now] = getEta(totalGamesEst, ngames, start);
+				long ellapsed = std::chrono::duration_cast<milli>(now-lastPrintTime).count();
+				int gamesPerSec = 1000*(ngames-nGamesLastUpdate)/ellapsed;
 				std::string status = name + ": parsed " + std::to_string(ngames) + \
 									 " games (pid " + std::to_string(md->pid) + " " + std::to_string(int(100*md->progress)) + \
 									 "% done, games/sec: " + \
 									 std::to_string(gamesPerSec) + \
 									 ", eta: " + eta + ")";
 				std::cout << status << std::endl;
-				lastPrintTime = hrc::now();
+
+				nGamesLastUpdate = ngames;
+				lastPrintTime = now;
 			}
 		} else {
 			throw std::runtime_error("invalid code: " + md->info);

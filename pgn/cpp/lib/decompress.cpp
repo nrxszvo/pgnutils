@@ -90,16 +90,15 @@ std::streamsize DecompressStream::decompressFrame() {
 	return bytesRead;
 }
 
-std::vector<std::string> DecompressStream::getLines() {
+void DecompressStream::getLines(std::vector<std::string>& lines) {
 	std::string frame = ss.str();
 	ss.str(std::string());
 
-	std::vector<std::string> lines;
 	int offset = 0;
 	int next = frame.find('\n', offset);
 	if (next == std::string::npos) {
 		rem += frame;
-		return lines;
+		return;
 	}
 
 	rem += frame.substr(offset, next);
@@ -117,7 +116,6 @@ std::vector<std::string> DecompressStream::getLines() {
 		lines.push_back(line);
 		offset = next+1;
 	}
-	return lines;
 }
 
 size_t DecompressStream::getFrameSize() {

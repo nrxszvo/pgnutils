@@ -35,7 +35,8 @@ ParserOutput processSerial(std::string zst) {
 
 	auto start = hrc::now();
 	while((bytesRead = decompressor.decompressFrame()) != 0) {
-		std::vector<std::string> lines = decompressor.getLines();
+		std::vector<std::string> lines;
+		decompressor.getLines(lines);
 		bytesProcessed += bytesRead;
 		for (auto line: lines) {
 			lineno++;

@@ -7,11 +7,11 @@ std::string zfill(int time) {
 }
 
 
-std::pair<std::string, int> getEta(uintmax_t total, uintmax_t soFar, tp &start) {	
-	if (soFar == 0) {
-		return std::make_pair("tbd", 0);
-	}
+std::pair<std::string, tp> getEta(uintmax_t total, uintmax_t soFar, tp &start) {	
 	auto stop = hrc::now();
+	if (soFar == 0) {
+		return std::make_pair("tbd", stop);
+	}
 	soFar = std::min(total, soFar);
 	long ellapsed = std::chrono::duration_cast<milli>(stop-start).count();
 	long remaining_ms = (total-soFar) * ellapsed / soFar;
@@ -20,7 +20,7 @@ std::pair<std::string, int> getEta(uintmax_t total, uintmax_t soFar, tp &start) 
 	int minutes = (remaining % 3600) / 60;
 	int secs = remaining % 60;
 	std::string etaStr = std::to_string(hrs) + ":" + zfill(minutes) + ":" + zfill(secs);
-	return std::make_pair(etaStr, ellapsed);
+	return std::make_pair(etaStr, stop);
 }
 
 std::string getEllapsedStr(int ellapsed) {

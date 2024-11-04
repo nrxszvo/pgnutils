@@ -23,7 +23,7 @@ public:
 	DecompressStream(std::string zstfn, size_t frameStart, size_t frameEnd, size_t frameSize=1024*1024);
 	~DecompressStream();
 	std::streamsize decompressFrame();
-	std::vector<std::string> getLines();
+	void getLines(std::vector<std::string>& lines);
 	size_t getFrameSize();
 	float getProgress();
 };	
