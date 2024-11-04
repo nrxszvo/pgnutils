@@ -150,9 +150,16 @@ def start_download_procs(url_q, zst_q, print_safe, nproc):
 
 
 def main(
-    list_fn, npy_dir, parser_bin, nproc, allowNoClock, available_proc=os.cpu_count()
+    list_fn,
+    npy_dir,
+    parser_bin,
+    n_dl_proc,
+    max_active_procs,
+    n_reader_proc,
+    n_move_proc,
+    allow_no_clock,
+    available_proc=os.cpu_count(),
 ):
-    n_dl_proc = int(available_proc / (nproc + 1))
     to_proc = collect_remaining(list_fn, npy_dir)
     if len(to_proc) == 0:
         print("All files already processed")
@@ -180,7 +187,7 @@ def main(
                     terminate = True
             else:
                 tmpdir = tempfile.TemporaryDirectory()
-                print_safe(f"{npyname}: processing zst...")
+                print_safe(f"{npyname}: processing zst into {tmpdir.name}...")
                 cmd = [
                     "./" + parser_bin,
                     "--zst",
@@ -190,28 +197,45 @@ def main(
                     "--outdir",
                     tmpdir.name,
                     "--nReaders",
-                    str(nproc),
-                    "--allowNoClock",
-                    str(allowNoClock),
+                    str(n_reader_proc),
+                    "--nMoveProcessors",
+                    str(n_move_proc),
                 ]
+                if allow_no_clock:
+                    cmd.append("--allowNoClock")
+
                 p = subprocess.Popen(cmd)
                 active_procs.append((p, tmpdir, npyname, zst_fn))
 
             def check_cleanup(p, tmpdir, name, zst):
                 finished = False
                 nmoves = None
-                if p.poll() is not None:
-                    print(f"{name}: writing to file...")
-                    nmoves, timestr = timeit(
-                        lambda: write_npys(tmpdir.name, npy_dir, name)
-                    )
-                    print(f"{name}: finished writing in {timestr}")
-                    os.remove(zst)
-                    tmpdir.cleanup()
-                    finished = True
+                status = p.poll()
+                if status is not None:
+                    try:
+                        if status != 0:
+                            print(f"{name}: poll returned {status}")
+                            _, errs = p.communicate()
+                            if errs is not None:
+                                print(f"{name}: returned errors:")
+                                print(errs)
+                            return True, 0
+
+                        print(f"{name}: writing to file from {tmpdir.name}...")
+                        nmoves, timestr = timeit(
+                            lambda: write_npys(tmpdir.name, npy_dir, name)
+                        )
+                        print(f"{name}: finished writing in {timestr}")
+                        os.remove(zst)
+                        finished = True
+                    finally:
+                        tmpdir.cleanup()
+
                 return finished, nmoves
 
-            while len(active_procs) == 2 or (terminate and len(active_procs) > 0):
+            while len(active_procs) == max_active_procs or (
+                terminate and len(active_procs) > 0
+            ):
                 for procdata in reversed(active_procs):
                     finished, nmoves = check_cleanup(*procdata)
                     if finished:
@@ -230,7 +254,7 @@ def main(
         for p, tmpdir, _, zst in active_procs:
             p.kill()
             tmpdir.cleanup()
-            os.remove(zst)
+            # os.remove(zst)
         url_q.close()
         zst_q.close()
         for dl_p in dl_ps:
@@ -258,16 +282,44 @@ if __name__ == "__main__":
     parser.add_argument("--npy", default="npy_w_clk", help="folder to save npy files")
     parser.add_argument("--parser", default="processZst", help="parser binary")
     parser.add_argument(
-        "--nproc",
-        default=os.cpu_count() - 1,
-        help="number of parallel parser threads",
+        "--n_dl_procs",
+        default=2,
+        type=int,
+        help="number of zsts to download in parallel",
+    )
+    parser.add_argument(
+        "--n_active_procs",
+        default=2,
+        type=int,
+        help="number of zsts to process in parallel",
+    )
+    parser.add_argument(
+        "--n_reader_procs",
+        default=2,
+        help="number of decompressor/game parser threads",
         type=int,
     )
     parser.add_argument(
-        "--allowNoClock",
+        "--n_move_procs",
+        default=os.cpu_count() - 2,
+        help="number of move parser threads",
+        type=int,
+    )
+
+    parser.add_argument(
+        "--allow_no_clock",
         default=False,
         action="store_true",
         help="allow games without clock time data to be included",
     )
     args = parser.parse_args()
-    main(args.list, args.npy, args.parser, args.nproc, args.allowNoClock)
+    main(
+        args.list,
+        args.npy,
+        args.parser,
+        args.n_dl_procs,
+        args.n_active_procs,
+        args.n_reader_procs,
+        args.n_move_procs,
+        args.allow_no_clock,
+    )
