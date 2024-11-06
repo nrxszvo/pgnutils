@@ -1,0 +1,23 @@
+npydir: npy_w_clk
+ntrain: 10
+nval: 2
+ntest: 2
+model_args:
+  dim: 2048 
+  n_layers: 16 
+  n_heads: 32
+  n_kv_heads: 8 
+  vocab_size: 2048
+  multiple_of: 256
+  ffn_dim_multiplier: 1.5 
+  norm_eps: 1.e-5
+  rope_theta: 500000
+  max_batch_size: 4 
+  max_seq_len: 512
+lr_scheduler_params:
+  lr: 1.e-3
+batch_size: 32
+max_steps: 1.e+6 
+val_check_steps: 1000
+strategy: auto
+random_seed: 0
