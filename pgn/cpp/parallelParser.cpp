@@ -3,9 +3,7 @@
 #include "lib/parseMoves.h"
 #include "lib/validate.h"
 #include "lib/utils.h"
-#include <memory>
 #include <stdexcept>
-#include <thread>
 #include <chrono>
 #include <iostream>
 #include <unordered_set>

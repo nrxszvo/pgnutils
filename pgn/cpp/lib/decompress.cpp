@@ -11,18 +11,28 @@ std::vector<size_t> getFrameBoundaries(std::string zst, int nBoundaries) {
 	std::vector<size_t> offsets;
 	size_t nbytes = std::filesystem::file_size(zst);		
 	std::ifstream infile(zst, std::ios::binary);
-	int buffer;
+	int buffers[4];
+	int idx=0;
 	for (int i=0; i<nBoundaries; i++) {
 		size_t offset = i*nbytes/nBoundaries;
 		infile.seekg(offset, infile.beg);
 		while(true) {
-			infile.read((char*)(&buffer), 4);
+			infile.read((char*)(&buffers[idx]), 4);
 			if (infile.gcount() <= 0) break;
-			else if (buffer == MAGIC) {
+			if (buffers[idx] == MAGIC) {
+				try {
+					DecompressStream ds(zst, offset, nbytes, 1024);
+					ds.decompressFrame();
+				} catch (std::runtime_error e) {
+					// false framestart, probably a random, unlucky occurence of MAGIC
+					continue;
+				}
 				offsets.push_back(offset);
 				break;
 			}
-			offset += 4;
+			idx = (idx+1) % 4;
+			offset++;
+			infile.seekg(-3, infile.cur);
 		}	
 	}
 	infile.close();
@@ -55,7 +65,7 @@ DecompressStream::DecompressStream(std::string zstfn, size_t frameStart, size_t 
 
 DecompressStream::~DecompressStream() {
 	free(in_mem);
-	free(out_mem);
+	free(out.dst);
 	infile.close();
 }
 
@@ -76,7 +86,9 @@ std::streamsize DecompressStream::decompressFrame() {
 
 		out.pos = 0;
 		zstdRet = ZSTD_decompressStream(dctx, &out, &in); 
-		if (ZSTD_isError(zstdRet)) throw std::runtime_error("zstd returned " + std::to_string(zstdRet));
+		if (ZSTD_isError(zstdRet)) {
+			throw std::runtime_error("zstd returned " + std::string(ZSTD_getErrorName(zstdRet)));
+		}
 		ss.write(reinterpret_cast<const char*>(out.dst), out.pos);
 
 		if (in.pos == in.size) {
