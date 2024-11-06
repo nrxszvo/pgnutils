@@ -31,6 +31,9 @@ class ModelArgs:
     max_batch_size: int = 32
     max_seq_len: int = 512
 
+    def __init__(self, paramd):
+        self.__dict__ = paramd
+
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):

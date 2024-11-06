@@ -1,48 +1,35 @@
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import lightning as L
-import os
 
 
 class MMCDataset(Dataset):
-    def __init__(self, series, input_size, h, stride=1):
+    def __init__(self, elos, gamestarts, moves):
         super().__init__()
-        self.h = h
-        self.input_size = input_size
-        self.window_size = input_size + h
-        self.stride = stride
-        self.series = series
-        nseries, npts, ndim = self.series.shape
-        self.nseries = nseries
-        self.npts = npts
-        self.win_per_series = (self.npts - self.window_size) // self.stride + 1
+        self.elos = elos
+        self.gamestarts = gamestarts
+        self.moves = moves
 
     def __len__(self):
-        return self.nseries * self.win_per_series
+        return 0
 
     def __getitem__(self, idx):
-        s_idx = idx // self.win_per_series
-        w_idx = self.stride * (idx - (s_idx * self.win_per_series))
-
-        window = self.series[s_idx, w_idx : w_idx + self.window_size].copy()
-        return {
-            "input": window[: self.input_size].reshape(-1),
-            "target": window[self.input_size :].reshape(-1),
-        }
+        return {"input": [], "target": []}
 
 
 def collect_npy(npydir):
-    mdfns = list(filter(lambda fn: "_md.npy" in fn, os.listdir(npydir)))
-    mmaps = []
-    for i, mdfn in enumerate(mdfns):
-        print(f"{i+1} of {len(mdfns)}")
-        fp = f"{npydir}/{mdfn}"
-        shape = np.load(fp, allow_pickle=True).item()["shape"]
-        mmap = np.memmap(
-            fp.replace("_md", "_moves"), mode="r", dtype="int32", shape=shape
-        )
-        mmaps.append(mmap)
-    return mdfns, mmaps
+    md = np.load(f"{npydir}/md.npy", allow_pickle=True).item()
+    elos = np.memmap(
+        f"{npydir}/elos.npy", mode="r", dtype="int16", shape=(2, md["ngames"])
+    )
+    gamestarts = np.memmap(
+        f"{npydir}/gamestarts.npy", mode="r", dtype="int64", shape=(1, md["ngames"])
+    )
+    moves = np.memmap(
+        f"{npydir}/moves.npy", mode="r", dtype="int16", shape=(2, md["nmoves"])
+    )
+
+    return md, elos, gamestarts, moves
 
 
 class MMCDataModule(L.LightningDataModule):
@@ -52,10 +39,6 @@ class MMCDataModule(L.LightningDataModule):
         ntrain,
         nval,
         ntest,
-        npts,
-        input_size,
-        stride,
-        spacing,
         batch_size,
         num_workers,
     ):
@@ -64,44 +47,20 @@ class MMCDataModule(L.LightningDataModule):
         self.ntrain = ntrain
         self.nval = nval
         self.ntest = ntest
-        self.npts = npts
-        self.input_size = input_size
-        self.stride = stride
         self.batch_size = batch_size
         self.num_workers = num_workers
 
+        self.md, self.elos, self.gamestarts, self.moves = collect_npy(self.datadir)
+
     def setup(self, stage):
         if stage == "fit":
-            self.trainset = MMCDataset(
-                self.series[: self.ntrain, : self.npts],
-                self.input_size,
-                self.h,
-                self.stride,
-            )
-            self.valset = MMCDataset(
-                self.series[self.ntrain : self.ntrain + self.nval, : self.npts],
-                self.input_size,
-                self.h,
-                self.stride,
-            )
+            self.trainset = MMCDataset(self.elos, self.gamestarts, self.moves)
+            self.valset = MMCDataset(self.elos, self.gamestarts, self.moves)
         if stage == "validate":
-            self.valset = MMCDataset(
-                self.series[self.ntrain : self.ntrain + self.nval, : self.npts],
-                self.input_size,
-                self.h,
-                self.stride,
-            )
+            self.valset = MMCDataset(self.elos, self.gamestarts, self.moves)
 
         if stage in ["test", "predict"]:
-            self.testset = MMCDataset(
-                self.series[
-                    self.ntrain + self.nval : self.ntrain + self.nval + self.ntest,
-                    : self.npts,
-                ],
-                self.input_size,
-                self.h,
-                self.stride,
-            )
+            self.testset = MMCDataset(self.elos, self.gamestarts, self.moves)
 
     def train_dataloader(self):
         return DataLoader(
