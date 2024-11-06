@@ -1,15 +1,15 @@
 import argparse
 import os
+import sys
 import re
 import subprocess
 import tempfile
 import time
 
-import numpy as np
 import wget
 from multiprocessing import Queue, Process, Lock
 
-from py.lib import timeit
+from py.lib import timeit, DataWriter
 
 
 def collect_existing_npy(npy_dir):
@@ -40,71 +40,6 @@ def parse_url(url):
     zst = m.group(1)
     pgn_fn = zst[:-4]
     return zst, pgn_fn
-
-
-def write_npys(tmpdir, npy_dir, npyname):
-    def get_fn(name):
-        return os.path.join(npy_dir, name)
-
-    success = False
-    nmoves = 0
-    try:
-        with open(get_fn("processed.txt"), "a") as f:
-            f.write(f"{npyname},")
-
-        elos = np.load(f"{tmpdir}/elos.npy")
-        gamestarts = np.load(f"{tmpdir}/gamestarts.npy")
-        moves = np.load(f"{tmpdir}/moves.npy")
-        ngames = gamestarts.shape[0]
-        nmoves = moves.shape[1]
-
-        with open(get_fn("processed.txt"), "a") as f:
-            f.write(f"{ngames},{nmoves},")
-
-        def update_mmap(data, dtype, ndim, nitems, fn):
-            mmap_update = np.memmap(
-                ".tmpmap",
-                mode="w+",
-                dtype=dtype,
-                shape=(ndim, nitems + data.shape[ndim - 1]),
-            )
-            if exists:
-                mmap_old = np.memmap(fn, mode="r", dtype=dtype, shape=(ndim, nitems))
-                mmap_update[:, :nitems] = mmap_old[:]
-            mmap_update[:, nitems:] = data[:]
-            os.rename(".tmpmap", fn)
-
-        if nmoves > 0:
-            mdfile = get_fn("md.npy")
-            elofile = get_fn("elos.npy")
-            gsfile = get_fn("gamestarts.npy")
-            mvfile = get_fn("moves.npy")
-
-            exists = os.path.exists(mdfile)
-
-            if exists:
-                md = np.load(mdfile, allow_pickle=True).item()
-            else:
-                md = {"archives": [], "ngames": 0, "nmoves": 0}
-
-            update_mmap(elos, "int16", 2, md["ngames"], elofile)
-            for i in range(ngames):
-                gamestarts[i] += md["nmoves"]
-            update_mmap(gamestarts, "int64", 1, md["ngames"], gsfile)
-            update_mmap(moves, "int16", 2, md["nmoves"], mvfile)
-
-            md["archives"].append((npyname, md["ngames"], md["nmoves"]))
-            md["ngames"] += ngames
-            md["nmoves"] += nmoves
-            np.save(mdfile, md, allow_pickle=True)
-        success = True
-    finally:
-        with open(get_fn("processed.txt"), "a") as f:
-            if success:
-                f.write("succeeded\n")
-            else:
-                f.write("failed\n")
-    return nmoves
 
 
 class PrintSafe:
@@ -158,12 +93,15 @@ def main(
     n_reader_proc,
     n_move_proc,
     allow_no_clock,
-    available_proc=os.cpu_count(),
+    alloc_games,
+    alloc_moves,
 ):
     to_proc = collect_remaining(list_fn, npy_dir)
     if len(to_proc) == 0:
         print("All files already processed")
         return
+
+    dataWriter = DataWriter(npy_dir, alloc_games, alloc_moves)
 
     url_q = Queue()
     zst_q = Queue()
@@ -214,18 +152,17 @@ def main(
                 if status is not None:
                     try:
                         if status != 0:
-                            print(f"{name}: poll returned {status}")
+                            print_safe(f"{name}: poll returned {status}")
                             _, errs = p.communicate()
                             if errs is not None:
-                                print(f"{name}: returned errors:")
-                                print(errs)
+                                print_safe(f"{name}: returned errors:\n{errs}")
                             return True, 0
 
-                        print(f"{name}: writing to file from {tmpdir.name}...")
+                        print_safe(f"{name}: writing to file from {tmpdir.name}...")
                         nmoves, timestr = timeit(
-                            lambda: write_npys(tmpdir.name, npy_dir, name)
+                            lambda: dataWriter.write_npys(tmpdir.name, name)
                         )
-                        print(f"{name}: finished writing in {timestr}")
+                        print_safe(f"{name}: finished writing in {timestr}")
                         os.remove(zst)
                         finished = True
                     finally:
@@ -236,12 +173,13 @@ def main(
             while len(active_procs) == max_active_procs or (
                 terminate and len(active_procs) > 0
             ):
+                time.sleep(5)
                 for procdata in reversed(active_procs):
                     finished, nmoves = check_cleanup(*procdata)
                     if finished:
                         if nmoves == 0:
                             terminate = True
-                            print(
+                            print_safe(
                                 "Last archive contained no moves, 'terminate' signaled"
                             )
                         active_procs.remove(procdata)
@@ -312,7 +250,27 @@ if __name__ == "__main__":
         action="store_true",
         help="allow games without clock time data to be included",
     )
+    parser.add_argument(
+        "--alloc_games",
+        default=1024**3,
+        help="initial memory allocation for game-level data (elos, gamestarts)",
+        type=int,
+    )
+    parser.add_argument(
+        "--alloc_moves",
+        default=50 * 1024**3,
+        help="initial memory allocation for move data (mvids, clk times)",
+        type=int,
+    )
     args = parser.parse_args()
+    if args.alloc_moves > 1024**3:
+        print(
+            f"WARNING: allocating {4*args.alloc_moves/1024**3:.2f} GB of output.  Continue?"
+        )
+        resp = input("Y|n")
+        if resp == "n":
+            sys.exit()
+
     main(
         args.list,
         args.npy,
@@ -322,4 +280,6 @@ if __name__ == "__main__":
         args.n_reader_procs,
         args.n_move_procs,
         args.allow_no_clock,
+        args.alloc_games,
+        args.alloc_moves,
     )
