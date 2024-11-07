@@ -19,5 +19,5 @@ target_link_libraries(processZst PRIVATE absl::flags_parse)
 target_link_libraries(processZst PUBLIC PgnParser Profiler)
 target_include_directories(processZst PUBLIC "${PROJECT_SOURCE_DIR}/lib")
 target_include_directories(processZst PUBLIC "${PROJECT_SOURCE_DIR}/profiling")
-target_include_directories(processZst PUBLIC "${PROJECT_SOURCE_DIR}/libnpy/include")
+target_include_directories(processZst PUBLIC "${PROJECT_SOURCE_DIR}/../libnpy/include")
 
