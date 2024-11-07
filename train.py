@@ -53,9 +53,7 @@ def main():
     def get_datamodule(batch_size, npydir):
         return MMCDataModule(
             npydir,
-            cfgyml.ntrain,
-            cfgyml.nval,
-            cfgyml.ntest,
+            cfgyml.elo_edges,
             batch_size,
             os.cpu_count() - 1,
         )

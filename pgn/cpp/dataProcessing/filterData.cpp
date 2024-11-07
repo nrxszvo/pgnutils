@@ -1,4 +1,5 @@
 #include "MMCRawDataReader.h"
+#include "npy.hpp"
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/flags/usage.h"
@@ -11,22 +12,16 @@ ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
 
 MMCRawDataReader::MMCRawDataReader(std::string npydir) {
 	gamestarts = std::ifstream(npydir + "/gamestarts.npy", std::ios::binary);
-	eloWhite = std::ifstream(npydir + "/elos.npy", std::ios::binary);
-	auto nbytes = std::filesystem::file_size(npydir + "/elos.npy");
-	eloBlack = std::ifstream(npydir + "/elos.npy", std::ios::binary);
-	eloBlack.seekg(nbytes/2, eloBlack.beg);
+	eloWhite = std::ifstream(npydir + "/welos.npy", std::ios::binary);
+	eloBlack = std::ifstream(npydir + "/belos.npy", std::ios::binary);
 
 	gamestarts.read((char*)&gameStart, sizeof(gameStart));
 	eloWhite.read((char*)&whiteElo, sizeof(whiteElo));
 	eloBlack.read((char*)&blackElo, sizeof(blackElo));
 
-	mvids = std::ifstream(npydir + "/moves.npy", std::ios::binary);
-
-	nbytes = std::filesystem::file_size(npydir + "/moves.npy");
-	clktimes = std::ifstream(npydir + "/moves.npy", std::ios::binary);
-	clktimes.seekg(nbytes/2, clktimes.beg);
-
-	}
+	mvids = std::ifstream(npydir + "/mvids.npy", std::ios::binary);
+	clktimes = std::ifstream(npydir + "/clk.npy", std::ios::binary);
+}
 
 std::tuple<size_t, size_t, int16_t, int16_t> MMCRawDataReader::nextGame(std::vector<int16_t>& mvidVec, std::vector<int16_t>& clkVec) {
 	
@@ -35,7 +30,7 @@ std::tuple<size_t, size_t, int16_t, int16_t> MMCRawDataReader::nextGame(std::vec
 
 	int64_t gameEnd;	
 	gamestarts.read((char*)&gameEnd, sizeof(gameEnd));
-	if (gamestarts.gcount() <= 0) {
+	if (gamestarts.gcount() <= 0 || gameEnd == 0) {
 		return std::make_tuple(0,0,0,0);
 	}
 
@@ -73,15 +68,8 @@ int getBin(int elo, std::vector<int>& binEdges) {
 	return binEdges.size();
 }
 
-int main(int argc, char *argv[]) {
-	absl::SetProgramUsageMessage("filter raw MimicChess dataset based on minimum number-of-moves and time-remaining constraints");
-	absl::ParseCommandLine(argc, argv);
-
-	MMCRawDataReader mrd(absl::GetFlag(FLAGS_npydir));
-	int minMoves = absl::GetFlag(FLAGS_minMoves);
-	int minTime = absl::GetFlag(FLAGS_minTime);
-	std::string outdir = absl::GetFlag(FLAGS_outdir);
-
+void filterData(std::string& npydir, int minMoves, int minTime, std::string& outdir) {
+	MMCRawDataReader mrd(npydir);
 	std::vector<int16_t> mvids;
 	std::vector<int16_t> clk;
 	std::vector<int> edges = {1000,1200,1400,1600,1800,2000,2200,2400,2600,2800,3000};
@@ -117,14 +105,27 @@ int main(int argc, char *argv[]) {
 	}	
 	auto writeData = [&](std::vector<std::pair<int64_t,int64_t> >& filtered, std::string name, int e){
 		if (filtered.size() > 0) {
-			std::ofstream out(outdir + "/" + name + "-" + std::to_string(e) + ".npy", std::ios::binary);
-			out.write((char*)filtered.data(), filtered.size()*sizeof(filtered[0]));
+			npy::npy_data_ptr<int64_t> d;
+			d.data_ptr = filtered.data();
+			d.shape = { filtered.size() };
+			npy::write_npy(outdir + "/" + name + "-" + std::to_string(e) + ".npy");
 		}
 	};	
 	for (int i=0; i<edges.size(); i++) {
 		writeData(filteredWhite[i], "white", edges[i]);	
 		writeData(filteredBlack[i], "black", edges[i]);
 	}
+}
+
+
+int main(int argc, char *argv[]) {
+	absl::SetProgramUsageMessage("filter raw MimicChess dataset based on minimum number-of-moves and time-remaining constraints");
+	absl::ParseCommandLine(argc, argv);
+	std::string npydir = absl::GetFlag(FLAGS_npydir);
+	int minMoves = absl::GetFlag(FLAGS_minMoves);
+	int minTime = absl::GetFlag(FLAGS_minTime);
+	std::string outdir = absl::GetFlag(FLAGS_outdir);
+	filterData(npydir, minMoves, minTime, outdir);
 	return 0;
 }
 
