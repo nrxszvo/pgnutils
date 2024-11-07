@@ -10,7 +10,7 @@ ABSL_FLAG(std::string, npydir, "", "directory containing npy raw data files");
 ABSL_FLAG(int, minMoves, 11, "minimum number of game moves to be included in filtered dataset");
 ABSL_FLAG(int, minTime, 30, "minimum time remaining to be included in filtered dataset");
 ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
-ABSL_FLAG(std::optional<std::string>, edgesFile, std::nullopt, "text file defining comma-delimited elo bin edges");
+//ABSL_FLAG(std::optional<std::string>, edgesFile, std::nullopt, "text file defining comma-delimited elo bin edges");
 
 MMCRawDataReader::MMCRawDataReader(std::string npydir) {
 	gamestarts = std::ifstream(npydir + "/gamestarts.npy", std::ios::binary);
@@ -83,10 +83,6 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 	MMCRawDataReader mrd(npydir);
 	std::vector<int16_t> mvids;
 	std::vector<int16_t> clk;
-	/*
-	std::vector<std::vector<int64_t> > filteredWhite(edges.size()+1);
-	std::vector<std::vector<int64_t> > filteredBlack(edges.size()+1);
-	*/
 	std::vector<int64_t> gsvec;
 	std::vector<int64_t> gevec;
 	std::vector<int16_t> elovec;
@@ -98,17 +94,6 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		elovec.push_back(welo);
 		elovec.push_back(belo);
 		
-		/*
-		if (idx % 2 == 0) {
-			int bin = getBin(welo, edges);
-			filteredWhite[bin].push_back(gs);
-			filteredWhite[bin].push_back(ge);
-		} else {
-			int bin = getBin(belo, edges);
-			filteredBlack[bin].push_back(gs);
-			filteredBlack[bin].push_back(ge);	
-		}
-		*/
 	};
 
 	while (true) {
@@ -126,21 +111,7 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 			}
 		}
 	}	
-	/*
-	auto writeData = [&](std::vector<int64_t>& filtered, std::string name, int e){
-		if (filtered.size() > 0) {
-			npy::npy_data_ptr<int64_t> d;
-			d.data_ptr = filtered.data();
-			d.shape = { filtered.size()/2, 2 };
-			npy::write_npy(outdir + "/" + name + "-" + std::to_string(e) + ".npy", d);
-		}
-	};	
-	for (int i=0; i<edges.size(); i++) {
-		writeData(filteredWhite[i], "white", edges[i]);	
-		writeData(filteredBlack[i], "black", edges[i]);
-	}
-	*/
-
+	
 	npy::npy_data_ptr<int64_t> gsnpy;
 	gsnpy.data_ptr = gsvec.data();
 	gsnpy.shape = { gsvec.size() };
@@ -180,10 +151,12 @@ int main(int argc, char *argv[]) {
 	int minMoves = absl::GetFlag(FLAGS_minMoves);
 	int minTime = absl::GetFlag(FLAGS_minTime);
 	std::string outdir = absl::GetFlag(FLAGS_outdir);
+	/*
 	std::vector<int> edges = {1000,1200,1400,1600,1800,2000,2200,2400,2600,2800,3000};
 	if (absl::GetFlag(FLAGS_edgesFile).has_value()) {
 		edges = readEdgesFile(absl::GetFlag(FLAGS_edgesFile).value());
 	}
+	*/
 	filterData(npydir, minMoves, minTime, outdir, edges);
 	return 0;
 }
