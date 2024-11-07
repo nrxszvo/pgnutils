@@ -3,14 +3,12 @@
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/flags/usage.h"
-#include <filesystem>
 #include <fstream>
 
 ABSL_FLAG(std::string, npydir, "", "directory containing npy raw data files");
 ABSL_FLAG(int, minMoves, 11, "minimum number of game moves to be included in filtered dataset");
 ABSL_FLAG(int, minTime, 30, "minimum time remaining to be included in filtered dataset");
 ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
-//ABSL_FLAG(std::optional<std::string>, edgesFile, std::nullopt, "text file defining comma-delimited elo bin edges");
 
 MMCRawDataReader::MMCRawDataReader(std::string npydir) {
 	gamestarts = std::ifstream(npydir + "/gamestarts.npy", std::ios::binary);
@@ -61,25 +59,7 @@ std::tuple<size_t, size_t, int16_t, int16_t> MMCRawDataReader::nextGame(std::vec
 	return std::make_tuple(nbytes, gs, we, be);
 }
 
-int getBin(int elo, std::vector<int>& binEdges) {
-	for (int i=0; i<binEdges.size(); i++) {
-		if (elo < binEdges[i]) {
-			return i;
-		}
-	}
-	return binEdges.size();
-}
-
-int qElo(int elo, std::vector<int>& binEdges) {
-	for (int i=0; i<binEdges.size(); i++) {
-		if (elo < binEdges[i]) {
-			return binEdges[i];
-		}
-	}
-	return binEdges[binEdges.size()-1];
-}
-
-void filterData(std::string& npydir, int minMoves, int minTime, std::string& outdir, std::vector<int>& edges) {
+void filterData(std::string& npydir, int minMoves, int minTime, std::string& outdir) {
 	MMCRawDataReader mrd(npydir);
 	std::vector<int16_t> mvids;
 	std::vector<int16_t> clk;
@@ -128,21 +108,6 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 	npy::write_npy(outdir + "/elo.npy", elonpy);
 }
 
-std::vector<int> readEdgesFile(std::string edgesFn) {
-	std::ifstream infile(edgesFn);
-	std::string line;
-	std::getline(infile, line);
-	std::vector<int> edges;
-	int idx = 0;
-	while (true) {
-		int end = line.substr(idx).find(",");
-		if (end == std::string::npos) break;
-		std::string eloStr = line.substr(idx, idx+end);
-		edges.push_back(std::stoi(eloStr));
-		idx += end+1;
-	}
-	return edges;
-}
 
 int main(int argc, char *argv[]) {
 	absl::SetProgramUsageMessage("filter raw MimicChess dataset based on minimum number-of-moves and time-remaining constraints");
@@ -151,12 +116,6 @@ int main(int argc, char *argv[]) {
 	int minMoves = absl::GetFlag(FLAGS_minMoves);
 	int minTime = absl::GetFlag(FLAGS_minTime);
 	std::string outdir = absl::GetFlag(FLAGS_outdir);
-	/*
-	std::vector<int> edges = {1000,1200,1400,1600,1800,2000,2200,2400,2600,2800,3000};
-	if (absl::GetFlag(FLAGS_edgesFile).has_value()) {
-		edges = readEdgesFile(absl::GetFlag(FLAGS_edgesFile).value());
-	}
-	*/
-	filterData(npydir, minMoves, minTime, outdir, edges);
+	filterData(npydir, minMoves, minTime, outdir);
 	return 0;
 }

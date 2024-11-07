@@ -1,16 +1,18 @@
 import argparse
 import os
+import shutil
 import sys
+from datetime import datetime
+
 import torch
+from config import get_config
 from fairscale.nn.model_parallel.initialize import (
     # get_model_parallel_rank,
     initialize_model_parallel,
     model_parallel_is_initialized,
 )
-from datetime import datetime
-from mmcdataset import MMCDataModule
 from mmc import MimicChessModule
-from config import get_config
+from mmcdataset import MMCDataModule
 from model import ModelArgs
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -33,8 +35,8 @@ parser.add_argument(
 def main():
     args = parser.parse_args()
     cfgyml = get_config(args.cfg)
-    # os.makedirs(args.save_path, exist_ok=True)
-    # shutil.copyfile(args.cfg, f"{args.save_path}/{args.outfn}.yml")
+    os.makedirs(args.save_path, exist_ok=True)
+    shutil.copyfile(args.cfg, f"{args.save_path}/{args.outfn}.yml")
     if not torch.distributed.is_initialized():
         torch.distributed.init_process_group("nccl")
 
@@ -50,45 +52,24 @@ def main():
     if local_rank > 0:
         sys.stdout = open(os.devnull, "w")
 
-    def get_datamodule(batch_size, npydir):
-        return MMCDataModule(
-            npydir,
-            cfgyml.elo_edges,
-            batch_size,
-            os.cpu_count() - 1,
-        )
-
-    def get_mmc(
-        name,
-        outdir,
-        model_args,
-        lr_scheduler_params,
-        batch_size,
-        strategy,
-        devices,
-    ):
-        return MimicChessModule(
-            name,
-            outdir,
-            model_args,
-            lr_scheduler_params,
-            cfgyml.max_steps,
-            cfgyml.val_check_steps,
-            cfgyml.random_seed,
-            strategy,
-            devices,
-        )
-
-    mmc = get_mmc(
+    mmc = MimicChessModule(
         args.outfn,
-        f"{args.save_path}/models",
+        os.path.join(args.save_path, "models"),
         ModelArgs(cfgyml.model_args),
         cfgyml.lr_scheduler_params,
-        cfgyml.batch_size,
+        cfgyml.max_steps,
+        cfgyml.val_check_steps,
+        cfgyml.random_seed,
         cfgyml.strategy,
         args.ngpu,
     )
-    dm = get_datamodule(cfgyml.batch_size, cfgyml.npydir)
+
+    dm = MMCDataModule(
+        cfgyml.npydir,
+        cfgyml.elo_edges,
+        cfgyml.batch_size,
+        os.cpu_count() - 1,
+    )
     mmc.fit(dm)
 
 

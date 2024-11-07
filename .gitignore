@@ -5,7 +5,7 @@ __pycache__/
 compile_commands.json
 debug/
 release/
-*zst
-*tmp
-*npy
+*.zst
+*.tmp
+*.npy
 L/

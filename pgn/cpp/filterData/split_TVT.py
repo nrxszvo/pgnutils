@@ -10,54 +10,67 @@ def load_npy(indir):
     return gs, ge, elo
 
 
-def expand_and_split(gs, ge, elo, minMoves, trainp, testp):
-    big_n = 0
-    for start, end in zip(gs, ge):
-        big_n += end + 1 - start - minMoves
-
+def expand_and_split(gs, ge, min_mvs, trainp, testp):
     ngames = gs.shape[0]
     ntrain = int(trainp * ngames)
     ntest = int(testp * ngames)
     nval = ngames - ntrain - ntest
 
-    train = np.empty((big_n, 2), dtype="int64")
-    val = np.empty((big_n, 2), dtype="int64")
-    test = np.empty((big_n, 2), dtype="int64")
+    train = np.empty((ntrain, 3), dtype="int64")
+    val = np.empty((nval, 3), dtype="int64")
+    test = np.empty((ntest, 3), dtype="int64")
+    nsamp = [0, 0, 0]
+    ridx = np.random.choice(np.arange(ngames), size=ngames, replace=False)
+    didx = [0, 0, 0]
 
-    randidx = np.random.choice(range(ngames), size=ngames, replace=False)
-
-    ind = [0, 0, 0]
-    for i, r in enumerate(randidx):
+    for i, r in enumerate(ridx):
         start = gs[r]
         end = ge[r]
-        n = end + 1 - start - minMoves
         if i < ntrain:
+            ds_idx = 0
             arr = train
-            idx = 0
         elif i < ntrain + nval:
+            ds_idx = 1
             arr = val
-            idx = 1
         else:
+            ds_idx = 2
             arr = test
-            idx = 2
 
-        arr[ind[idx] : ind[idx] + n, 0] = r
-        arr[ind[idx] : ind[idx] + n, 1] = np.arange(minMoves, minMoves + n)
+        idx = didx[ds_idx]
+        arr[idx, 0] = nsamp[ds_idx]
+        arr[idx, 1] = r
+        n = end + 1 - start - min_mvs
+        nsamp[ds_idx] += n
+        didx[ds_idx] += 1
 
         if i % 1000 == 0:
             print(f"{int(100*i/len(gs))}%", end="\r")
-        ind[idx] += n
 
-    train = train[: ind[0]]
-    val = val[: ind[1]]
-    test = test[: ind[2]]
-
-    return train, val, test
+    return nsamp, train, val, test
 
 
-def write_out(outdir, train, val, test):
+def write_out(outdir, min_mvs, train, train_n, val, val_n, test, test_n):
+    np.save(
+        f"{outdir}/filter_md.npy",
+        {
+            "min_moves": min_mvs,
+            "train_n": train_n,
+            "train_shape": train.shape,
+            "val_n": val_n,
+            "val_shape": val.shape,
+            "test_n": test_n,
+            "test_shape": test.shape,
+        },
+        allow_pickle=True,
+    )
     for data, name in [(train, "train"), (val, "val"), (test, "test")]:
-        np.save(os.path.join(outdir, f"{name}.npy"), data, allow_pickle=True)
+        mmap = np.memmap(
+            os.path.join(outdir, f"{name}.npy"),
+            mode="w+",
+            dtype="int64",
+            shape=data.shape,
+        )
+        mmap[:] = data[:]
 
 
 def main():
@@ -67,15 +80,17 @@ def main():
     parser.add_argument("--trainP", default=0.8, type=float, help="trainP")
     parser.add_argument("--testP", default=0.1, type=float, help="testP")
     parser.add_argument(
-        "--minMoves", default=11, type=int, help="minimum number of moves"
+        "--min_moves", default=11, type=int, help="minimum number of moves"
     )
     args = parser.parse_args()
 
     gs, ge, elo = load_npy(args.indir)
-    train, val, test = expand_and_split(
-        gs, ge, elo, args.minMoves, args.trainP, args.testP
+    big_n, train, val, test = expand_and_split(
+        gs, ge, elo, args.min_moves, args.trainP, args.testP
     )
-    write_out(args.outdir, train, val, test)
+    write_out(
+        args.outdir, args.min_moves, train, big_n[0], val, big_n[1], test, big_n[2]
+    )
 
 
 if __name__ == "__main__":
