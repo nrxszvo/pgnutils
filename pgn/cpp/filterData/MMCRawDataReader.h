@@ -6,7 +6,6 @@
 
 class MMCRawDataReader {		
 	std::ifstream gamestarts;
-	std::ifstream mvids;
 	std::ifstream clktimes;
 	std::ifstream eloWhite;
 	std::ifstream eloBlack;
@@ -18,5 +17,5 @@ class MMCRawDataReader {
 
 public:
 	MMCRawDataReader(std::string npydir);
-	std::tuple<size_t,size_t,int16_t,int16_t> nextGame(std::vector<int16_t>& mvids, std::vector<int16_t>& clk);
+	std::tuple<size_t,size_t,int16_t,int16_t> nextGame(std::vector<int16_t>& clk);
 };
