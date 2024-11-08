@@ -101,7 +101,7 @@ class MimicChessModule(L.LightningModule):
 
     def forward(self, inputs, target=None):
         insample_y = inputs[0]
-        return self.model(insample_y)
+        return self.model(insample_y, 0)
 
     def training_step(self, batch, batch_idx):
         pred = self([batch["input"]])

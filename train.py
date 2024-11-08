@@ -28,7 +28,7 @@ parser.add_argument(
     help="prediction file name",
 )
 parser.add_argument(
-    "--ngpu", default=2, type=int, help="number of gpus per training trial"
+    "--ngpu", default=1, type=int, help="number of gpus per training trial"
 )
 
 
@@ -37,25 +37,30 @@ def main():
     cfgyml = get_config(args.cfg)
     os.makedirs(args.save_path, exist_ok=True)
     shutil.copyfile(args.cfg, f"{args.save_path}/{args.outfn}.yml")
+    model_parallel_size = 1
     if not torch.distributed.is_initialized():
-        torch.distributed.init_process_group("nccl")
+        if torch.cuda.is_available():
+            torch.distributed.init_process_group("nccl")
+        else:
+            torch.distributed.init_process_group("gloo")
 
     if not model_parallel_is_initialized():
         model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
         initialize_model_parallel(model_parallel_size)
 
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    torch.cuda.set_device(local_rank)
+    if torch.cuda.is_available():
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
+        if local_rank > 0:
+            sys.stdout = open(os.devnull, "w")
 
     torch.manual_seed(cfgyml.random_seed)
 
-    if local_rank > 0:
-        sys.stdout = open(os.devnull, "w")
-
+    model_args = ModelArgs(cfgyml.model_args)
     mmc = MimicChessModule(
         args.outfn,
         os.path.join(args.save_path, "models"),
-        ModelArgs(cfgyml.model_args),
+        model_args,
         cfgyml.lr_scheduler_params,
         cfgyml.max_steps,
         cfgyml.val_check_steps,
@@ -66,8 +71,8 @@ def main():
 
     dm = MMCDataModule(
         cfgyml.datadir,
-        cfgyml.filterdir,
         cfgyml.elo_edges,
+        model_args.max_seq_len,
         cfgyml.batch_size,
         os.cpu_count() - 1,
     )

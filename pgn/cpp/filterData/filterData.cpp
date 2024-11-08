@@ -122,11 +122,12 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		splits[dsIdx].nSamp += nsamp;
 		splits[dsIdx].idxData.write((char*)&nGames, sizeof(int64_t));
 		splits[dsIdx].nGames++;
-		nGames++;
 	
 		gsfile.write((char*)&gs, sizeof(gs));
 		elofile.write((char*)&welo, sizeof(welo));
 		elofile.write((char*)&belo, sizeof(belo));
+
+		nGames++;
 	};
 
 	int nTotal = 0;
@@ -150,6 +151,7 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 
 	json md;
 	md["ngames"] = nGames;
+	md["min_moves"] = minMoves;
 	for (int i=0; i<splits.size(); i++) {
 		Split& split = splits[i];
 		split.idxData.close();

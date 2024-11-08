@@ -18,6 +18,8 @@
 #define QCASTLEW KBISHOP*64
 #define QCASTLEB (16+KBISHOP)*64 + 56
 
+#define NOOP QBISHOP*64+3
+
 struct MoveState {
 	char piece;
 	std::string src;

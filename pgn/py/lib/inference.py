@@ -157,6 +157,8 @@ KCASTLEB = (16 + QBISHOP) * 64 + 63
 QCASTLEW = KBISHOP * 64
 QCASTLEB = (16 + KBISHOP) * 64 + 56
 
+NOOP = QBISHOP * 64 + 3
+
 
 def castle_to_mvid(mvdata, board, state):
     if mvdata["castle"] == "king":

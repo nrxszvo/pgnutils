@@ -136,7 +136,7 @@ class Attention(nn.Module):
                 self.n_local_kv_heads,
                 self.head_dim,
             )
-        ).cuda()
+        )
         self.cache_v = torch.zeros(
             (
                 args.max_batch_size,
@@ -144,7 +144,10 @@ class Attention(nn.Module):
                 self.n_local_kv_heads,
                 self.head_dim,
             )
-        ).cuda()
+        )
+        if torch.cuda.is_available():
+            self.cache_k.cuda()
+            self.cache_v.cuda()
 
     def forward(
         self,
@@ -258,9 +261,7 @@ class Transformer(nn.Module):
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
-        self.tok_embeddings = VocabParallelEmbedding(
-            params.vocab_size, params.dim, init_method=lambda x: x
-        )
+        self.tok_embeddings = VocabParallelEmbedding(params.vocab_size, params.dim)
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
@@ -279,6 +280,7 @@ class Transformer(nn.Module):
 
     @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
+        breakpoint()
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
