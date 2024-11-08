@@ -7,14 +7,15 @@ import lightning as L
 class MMCDataset(Dataset):
     def __init__(self, nsamp, indices, gs, elo, mvids, elo_edges):
         super().__init__()
-        self.indices
+        self.nsamp = nsamp
+        self.indices = indices
+        self.gs = gs
         self.elo = elo
         self.mvids = mvids
         self.elo_edge = elo_edges
-        self.nsamp = nsamp
 
     def __len__(self):
-        self.nsamp
+        return self.nsamp
 
     def _get_head(self, elo):
         for i, upper in enumerate(self.elo_edges):
@@ -35,29 +36,48 @@ class MMCDataset(Dataset):
         return {"input": mvids[:-1], "target": mvids[-1], "head": head}
 
 
-def load_npy(npydir):
-    def path(name):
-        return os.path.join(npydir, f"{name}.npy")
-
-    md = (np.load(path("md.npy"), allow_pickle=True),)
-    fmd = (np.load(path("filter_md.npy"), allow_pickle=True),)
+def load_npy(datadir, filterdir):
+    md = np.load(os.path.join(datadir, "md.npy"), allow_pickle=True).item()
+    fmd = np.load(os.path.join(filterdir, "filter_md.npy"), allow_pickle=True).item()
 
     return {
         "md": md,
         "fmd": fmd,
-        "gs": np.memmap(path("gs.npy"), mode="r", dtype="int64", shape=md["ngames"]),
-        "elo": np.memmap(path("elo.npy"), mode="r", dtype="int16", shape=md["ngames"]),
+        "gs": np.memmap(
+            os.path.join(filterdir, "gs.npy"),
+            mode="r",
+            dtype="int64",
+            shape=fmd["ngames"],
+        ),
+        "elo": np.memmap(
+            os.path.join(filterdir, "elo.npy"),
+            mode="r",
+            dtype="int16",
+            shape=fmd["ngames"],
+        ),
         "mvids": np.memmap(
-            path("mivds.npy"), mode="r", dtype="int16", shape=md["nmoves"]
+            os.path.join(datadir, "mvids.npy"),
+            mode="r",
+            dtype="int16",
+            shape=md["nmoves"],
         ),
         "train": np.memmap(
-            path("train.npy"), mode="r", dtype="int64", shape=fmd["train_shape"]
+            os.path.join(filterdir, "train.npy"),
+            mode="r",
+            dtype="int64",
+            shape=fmd["train_shape"],
         ),
         "val": np.memmap(
-            path("val.npy"), mode="r", dtype="int64", shape=fmd["val_shape"]
+            os.path.join(filterdir, "val.npy"),
+            mode="r",
+            dtype="int64",
+            shape=fmd["val_shape"],
         ),
         "test": np.memmap(
-            path("test.npy"), mode="r", dtype="int64", shape=fmd["test_shape"]
+            os.path.join(filterdir, "test.npy"),
+            mode="r",
+            dtype="int64",
+            shape=fmd["test_shape"],
         ),
     }
 
@@ -65,21 +85,22 @@ def load_npy(npydir):
 class MMCDataModule(L.LightningDataModule):
     def __init__(
         self,
-        npydir,
+        datadir,
+        filterdir,
         elo_edges,
         batch_size,
         num_workers,
     ):
         super().__init__()
-        self.datadir = npydir
         self.elo_edges = elo_edges
         self.batch_size = batch_size
         self.num_workers = num_workers
 
-        self.__dict__.update(load_npy(npydir))
+        self.__dict__.update(load_npy(datadir, filterdir))
 
     def setup(self, stage):
         if stage == "fit":
+            breakpoint()
             self.trainset = MMCDataset(
                 self.fmd["train_n"],
                 self.train,

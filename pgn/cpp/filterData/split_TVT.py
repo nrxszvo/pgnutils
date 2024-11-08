@@ -6,8 +6,7 @@ import os
 def load_npy(indir):
     gs = np.load(f"{indir}/gs.npy", allow_pickle=True)
     ge = np.load(f"{indir}/ge.npy", allow_pickle=True)
-    elo = np.load(f"{indir}/elo.npy", allow_pickle=True)
-    return gs, ge, elo
+    return gs, ge
 
 
 def expand_and_split(gs, ge, min_mvs, trainp, testp):
@@ -16,9 +15,9 @@ def expand_and_split(gs, ge, min_mvs, trainp, testp):
     ntest = int(testp * ngames)
     nval = ngames - ntrain - ntest
 
-    train = np.empty((ntrain, 3), dtype="int64")
-    val = np.empty((nval, 3), dtype="int64")
-    test = np.empty((ntest, 3), dtype="int64")
+    train = np.empty((ntrain, 2), dtype="int64")
+    val = np.empty((nval, 2), dtype="int64")
+    test = np.empty((ntest, 2), dtype="int64")
     nsamp = [0, 0, 0]
     ridx = np.random.choice(np.arange(ngames), size=ngames, replace=False)
     didx = [0, 0, 0]
@@ -49,7 +48,7 @@ def expand_and_split(gs, ge, min_mvs, trainp, testp):
     return nsamp, train, val, test
 
 
-def write_out(outdir, min_mvs, train, train_n, val, val_n, test, test_n):
+def write_out(outdir, ngames, min_mvs, train, train_n, val, val_n, test, test_n):
     np.save(
         f"{outdir}/filter_md.npy",
         {
@@ -60,6 +59,7 @@ def write_out(outdir, min_mvs, train, train_n, val, val_n, test, test_n):
             "val_shape": val.shape,
             "test_n": test_n,
             "test_shape": test.shape,
+            "ngames": ngames,
         },
         allow_pickle=True,
     )
@@ -84,12 +84,20 @@ def main():
     )
     args = parser.parse_args()
 
-    gs, ge, elo = load_npy(args.indir)
+    gs, ge = load_npy(args.indir)
     big_n, train, val, test = expand_and_split(
-        gs, ge, elo, args.min_moves, args.trainP, args.testP
+        gs, ge, args.min_moves, args.trainP, args.testP
     )
     write_out(
-        args.outdir, args.min_moves, train, big_n[0], val, big_n[1], test, big_n[2]
+        args.outdir,
+        gs.shape[0],
+        args.min_moves,
+        train,
+        big_n[0],
+        val,
+        big_n[1],
+        test,
+        big_n[2],
     )
 
 

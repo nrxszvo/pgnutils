@@ -29,12 +29,19 @@ std::tuple<size_t, size_t, int16_t, int16_t> MMCRawDataReader::nextGame(std::vec
 	clkVec.clear();
 
 	int64_t gameEnd;	
-	gamestarts.read((char*)&gameEnd, sizeof(gameEnd));
-	if (gamestarts.gcount() <= 0 || gameEnd == 0) {
-		return std::make_tuple(0,0,0,0);
-	}
+	size_t gameSize;
 
-	size_t gameSize = gameEnd-gameStart;
+	while (true) {
+		gamestarts.read((char*)&gameEnd, sizeof(gameEnd));
+		if (gamestarts.gcount() <= 0 || gameEnd == 0) {
+			std::cout << "gcount: " << gamestarts.gcount() << " gameEnd: " << gameEnd << std::endl;
+			return std::make_tuple(0,0,0,0);
+		}
+
+		gameSize = gameEnd-gameStart;
+		if (gameSize > 0) break;
+
+	}
 
 	size_t nbytes = gameSize*sizeof(int16_t);
 	int16_t* buf = (int16_t*)malloc(nbytes);
@@ -59,6 +66,12 @@ std::tuple<size_t, size_t, int16_t, int16_t> MMCRawDataReader::nextGame(std::vec
 	return std::make_tuple(nbytes, gs, we, be);
 }
 
+struct Split {
+	int64_t cum;
+	std::vector<int64_t> cumSamp;
+	std::vector<int64_t> gameStart;
+	Split(): cum(0) {};
+};
 void filterData(std::string& npydir, int minMoves, int minTime, std::string& outdir) {
 	MMCRawDataReader mrd(npydir);
 	std::vector<int16_t> mvids;
@@ -67,8 +80,14 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 	std::vector<int64_t> gevec;
 	std::vector<int16_t> elovec;
 
-	auto insertCoords = [&](size_t gs, int idx, int welo, int belo){
+	std::vector<Split> splits(3);
+
+	auto insertCoords = [&](size_t gs, int idx, int welo, int belo, int ds_idx){
 		size_t ge = gs+idx+1;
+		splits[ds_idx].cumSamp.push_back(splits[ds_idx].cum);
+		splits[ds_idx].cum += ge+1-gs-minMoves;
+		splits[ds_idx].gameStart.push_back(gs);
+
 		gsvec.push_back(gs);
 		gevec.push_back(ge);
 		elovec.push_back(welo);
@@ -76,21 +95,21 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		
 	};
 
+	int nTotal = 0;
+	int nInc = 0;
 	while (true) {
 	 	auto [bytesRead, gameStart, whiteElo, blackElo] = mrd.nextGame(mvids, clk);
 		if (bytesRead == 0) break;
-
+		nTotal++;
 		int idx = mvids.size()-1;	
-		while (idx >= minMoves && clk[idx] < minTime) idx--;
+		while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
 		if (idx >= minMoves) {
+			nInc++;
 			insertCoords(gameStart, idx, whiteElo, blackElo);
 			idx--;
-			while (idx >= minMoves && clk[idx] < minTime) idx -= 2;
-			if (idx >= minMoves) {
-				insertCoords(gameStart, idx, whiteElo, blackElo); 
-			}
 		}
 	}	
+	std::cout << "Included " << nInc << " out of " << nTotal << " games" << std::endl;
 	
 	npy::npy_data_ptr<int64_t> gsnpy;
 	gsnpy.data_ptr = gsvec.data();

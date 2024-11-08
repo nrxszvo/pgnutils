@@ -65,7 +65,8 @@ def main():
     )
 
     dm = MMCDataModule(
-        cfgyml.npydir,
+        cfgyml.datadir,
+        cfgyml.filterdir,
         cfgyml.elo_edges,
         cfgyml.batch_size,
         os.cpu_count() - 1,
