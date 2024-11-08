@@ -38,7 +38,7 @@ class MMCDataset(Dataset):
 
 def load_npy(datadir, filterdir):
     md = np.load(os.path.join(datadir, "md.npy"), allow_pickle=True).item()
-    fmd = np.load(os.path.join(filterdir, "filter_md.npy"), allow_pickle=True).item()
+    fmd = np.load(os.path.join(filterdir, "md.npy"), allow_pickle=True)
 
     return {
         "md": md,

@@ -3,9 +3,13 @@
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/flags/usage.h"
+#include "nlohmann/json.hpp"
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <filesystem>
+
+using json = nlohmann::json;
 
 ABSL_FLAG(std::string, npydir, "", "directory containing npy raw data files");
 ABSL_FLAG(int, minMoves, 11, "minimum number of game moves to be included in filtered dataset");
@@ -19,11 +23,20 @@ MMCRawDataReader::MMCRawDataReader(std::string npydir) {
 	eloWhite = std::ifstream(npydir + "/welos.npy", std::ios::binary);
 	eloBlack = std::ifstream(npydir + "/belos.npy", std::ios::binary);
 
+	gamestarts.seekg(0, gamestarts.end);
+	size_t nbytes = gamestarts.tellg();
+	totalGames = nbytes/8;
+	gamestarts.seekg(0, gamestarts.beg);
+
 	gamestarts.read((char*)&gameStart, sizeof(gameStart));
 	eloWhite.read((char*)&whiteElo, sizeof(whiteElo));
 	eloBlack.read((char*)&blackElo, sizeof(blackElo));
 
 	clktimes = std::ifstream(npydir + "/clk.npy", std::ios::binary);
+}
+
+int64_t MMCRawDataReader::getTotalGames() {
+	return totalGames;
 }
 
 std::tuple<size_t, size_t, int16_t, int16_t> MMCRawDataReader::nextGame(std::vector<int16_t>& clkVec) {
@@ -81,33 +94,42 @@ public:
 };
 
 struct Split {
-	int64_t cum;
-	std::vector<int64_t> idxData;
-	Split(): cum(0) {};
+	int64_t nSamp;
+	int64_t nGames;
+	std::ofstream idxData;
+	std::string name;
+	Split(): nSamp(0), nGames(0) {};
 };
 
 void filterData(std::string& npydir, int minMoves, int minTime, std::string& outdir, float trainp, float testp) {
 	MMCRawDataReader mrd(npydir);
 	std::vector<int16_t> clk;
-	std::vector<int64_t> gsvec;
-	std::vector<int16_t> elovec;
-
+	std::ofstream gsfile(outdir + "/gs.npy", std::ios::binary);
+	std::ofstream elofile(outdir + "/elo.npy", std::ios::binary);
 	std::vector<Split> splits(3);
+	std::vector<std::string> names = {"train", "test", "val"};
+	for (int i=0; i<3; i++) {
+		splits[i].name = names[i];
+		splits[i].idxData = std::ofstream(outdir + "/" + names[i] + ".npy", std::ios::binary);
+	}
 	RandDS rds(trainp, testp);
 
-	auto insertCoords = [&](size_t gs, int idx, int welo, int belo){
-		int ds_idx = rds.get();
-		size_t nsamp = idx+1-gs-minMoves;
-		splits[ds_idx].idxData.push_back(splits[ds_idx].cum);
-		splits[ds_idx].cum += nsamp;
-		splits[ds_idx].idxData.push_back(gsvec.size());
-		gsvec.push_back(gs);
-		elovec.push_back(welo);
-		elovec.push_back(belo);
+	int64_t nGames = 0;
+	auto insertCoords = [&](size_t gs, int idx, int16_t welo, int16_t belo){
+		int dsIdx = rds.get();
+		size_t nsamp = idx+2-minMoves;
+		splits[dsIdx].idxData.write((char*)&splits[dsIdx].nSamp, sizeof(int64_t));
+		splits[dsIdx].nSamp += nsamp;
+		splits[dsIdx].idxData.write((char*)&nGames, sizeof(int64_t));
+		splits[dsIdx].nGames++;
+		nGames++;
+	
+		gsfile.write((char*)&gs, sizeof(gs));
+		elofile.write((char*)&welo, sizeof(welo));
+		elofile.write((char*)&belo, sizeof(belo));
 	};
 
 	int nTotal = 0;
-	int nInc = 0;
 	while (true) {
 	 	auto [bytesRead, gameStart, whiteElo, blackElo] = mrd.nextGame(clk);
 		if (bytesRead == 0) break;
@@ -115,39 +137,32 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		int idx = clk.size()-1;	
 		while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
 		if (idx >= minMoves) {
-			nInc++;
 			insertCoords(gameStart, idx, whiteElo, blackElo);
 		}
+		if (nTotal % 1000 == 0) {
+			std::cout << int(100*(float)nTotal/mrd.getTotalGames()) << "% done\r";
+		}
 	}	
-	std::cout << "Included " << nInc << " out of " << nTotal << " games" << std::endl;
+	std::cout << "Included " << nGames << " out of " << nTotal << " games" << std::endl;
 	
-	npy::npy_data_ptr<int64_t> gsnpy;
-	gsnpy.data_ptr = gsvec.data();
-	gsnpy.shape = { gsvec.size() };
-	npy::write_npy(outdir + "/gs.npy", gsnpy);
+	gsfile.close();
+	elofile.close();
 
-	npy::npy_data_ptr<int16_t> elonpy;
-	elonpy.data_ptr = elovec.data();
-	elonpy.shape = { elovec.size()/2, 2 };
-	npy::write_npy(outdir + "/elo.npy", elonpy);
-
+	json md;
+	md["ngames"] = nGames;
 	for (int i=0; i<splits.size(); i++) {
-		std::string name;
-		if (i == 0) name = "train.npy";
-		else if (i == 1) name = "test.npy";
-		else name = "val.npy";
 		Split& split = splits[i];
-
-		npy::npy_data_ptr<int64_t> idnpy;
-		idnpy.data_ptr = split.idxData.data();
-		idnpy.shape = { split.idxData.size()/2, 2 };
-		npy::write_npy(outdir + "/" + name, idnpy);
+		split.idxData.close();
+		md[split.name + "_shape"] = {split.nGames,2};
+		md[split.name + "_n"] = split.nSamp;
 	}
+	std::ofstream mdfile(outdir + "/fmd.json");
+	mdfile << md << std::endl;
 }
 
 
 int main(int argc, char *argv[]) {
-	absl::SetProgramUsageMessage("filter raw MimicChess dataset based on minimum number-of-moves and time-remaining constraints");
+	absl::SetProgramUsageMessage("filter raw MimicChess dataset based on minimum number-of-moves and time-remaining constraints; randomly assign each game to train, val, or test sets");
 	absl::ParseCommandLine(argc, argv);
 	std::string npydir = absl::GetFlag(FLAGS_npydir);
 	int minMoves = absl::GetFlag(FLAGS_minMoves);
