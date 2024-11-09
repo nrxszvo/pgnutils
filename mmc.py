@@ -103,12 +103,11 @@ class MimicChessModule(L.LightningModule):
         }
         return {"optimizer": optimizer, "lr_scheduler": config}
 
-    def forward(self, inputs, target=None):
-        insample_y = inputs[0]
-        return self.model(insample_y, 0)
+    def forward(self, tokens, heads, target=None):
+        return self.model(tokens, 0, heads)
 
     def training_step(self, batch, batch_idx):
-        logits = self([batch["input"]])
+        logits = self(batch["input"], batch["heads"])
         logits = logits[:, self.min_moves :].permute(0, 2, 1)
         tgt = batch["target"]
         loss = self.loss(logits, tgt, ignore_index=self.NOOP)
@@ -118,7 +117,7 @@ class MimicChessModule(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        logits = self([batch["input"]])
+        logits = self(batch["input"], batch["heads"])
         logits = logits[:, self.min_moves :].permute(0, 2, 1)
         tgt = batch["target"]
         valid_loss = self.loss(logits, tgt, ignore_index=self.NOOP)

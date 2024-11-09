@@ -3,7 +3,7 @@
 
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import fairscale.nn.model_parallel.initialize as fs_init
 import torch
@@ -19,6 +19,7 @@ from torch import nn
 @dataclass
 class ModelArgs:
     dim: int = 4096
+    n_output_heads: int = 12
     n_layers: int = 32
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
@@ -236,8 +237,11 @@ class Transformer(nn.Module):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.output = ColumnParallelLinear(
-            params.dim, params.vocab_size, bias=False, init_method=lambda x: x
+        self.heads = nn.ModuleList(
+            [
+                ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
+                for _ in range(params.n_output_heads)
+            ]
         )
 
         self.freqs_cis = precompute_freqs_cis(
@@ -246,7 +250,7 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor, start_pos: int):
+    def forward(self, tokens: torch.Tensor, start_pos: int, head_idxs: List[int]):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
@@ -269,5 +273,17 @@ class Transformer(nn.Module):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        output = self.output(h).float()
-        return output
+
+        batch_size, seq_len, _ = h.shape
+        outputs = torch.zeros(
+            (batch_size, seq_len, self.vocab_size), dtype=h.dtype, device=h.device
+        )
+
+        for clridx in range(2):
+            clr_h = h[:, clridx::2]
+            for i, head in enumerate(self.heads):
+                clr_hd = head_idxs[clridx] == i
+                if clr_hd.sum() > 0:
+                    outputs[clr_hd, clridx::2] = head(clr_h[clr_hd]).float()
+
+        return outputs
