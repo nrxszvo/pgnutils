@@ -1,10 +1,15 @@
 import numpy as np
 import os
+import torch
 from torch.utils.data import Dataset, DataLoader, RandomSampler
 import lightning as L
 import json
 
 NOOP = 2 * 64 + 3  # white's QBISHOP on d1
+
+
+def init_worker(seed):
+    np.random.seed(seed)
 
 
 class MMCDataset(Dataset):
@@ -28,28 +33,22 @@ class MMCDataset(Dataset):
                 return i
         return len(self.elo_edges)
 
-    def __getitem__(self, samp_id):
-        idx = np.searchsorted(self.indices[:, 0], samp_id, side="right") - 1
-        gedge, gidx = self.indices[idx]
-        offset = self.min_moves + samp_id - gedge
-        gs = self.gs[gidx]
-        ge = gs + offset
-        gs = max(gs, ge - self.seq_len - 1)
-
+    def __getitem__(self, idx):
+        gs, nmoves, gidx = self.indices[idx]
         inp = np.empty(self.seq_len, dtype="int32")
-        n_inp = ge - gs - 1
-        inp[: self.seq_len - n_inp] = NOOP
-        inp[-n_inp:] = self.mvids[gs : ge - 1]
-        tgt = np.empty(self.seq_len, dtype="int64")
-        tgt[: self.min_moves - 1 + self.seq_len - n_inp - 1] = NOOP
-        tgt[-n_inp - 1 :] = self.mvids[gs + 1 : ge]
+        n_inp = min(self.seq_len, nmoves - 1)
+        inp[:n_inp] = self.mvids[gs : gs + n_inp]
+        inp[n_inp:] = NOOP
+
+        tgt = np.empty(self.seq_len - self.min_moves, dtype="int64")
+        tgt[: n_inp - self.min_moves] = self.mvids[gs + self.min_moves : gs + n_inp]
+        tgt[n_inp - self.min_moves :] = NOOP
         welo, belo = self.elo[gidx]
-        elo = welo if offset % 2 == 1 else belo
-        head = self._get_head(elo)
+        heads = (self._get_head(welo), self._get_head(belo))
         return {
             "input": inp,
-            "target": self.mvids[ge - 1].astype("int64"),
-            "head": head,
+            "target": tgt,
+            "heads": heads,
         }
 
 
@@ -57,6 +56,10 @@ def load_data(dirname):
     md = np.load(os.path.join(dirname, "md.npy"), allow_pickle=True).item()
     with open(f"{dirname}/fmd.json") as f:
         fmd = json.load(f)
+    # min_moves is the minimum game length that can be included in the dataset
+    # we subtract one here so that it now represents the minimum number of moves that the
+    # model must see before making its first prediction
+    fmd["min_moves"] -= 1
     return {
         "md": md,
         "fmd": fmd,
@@ -115,6 +118,7 @@ class MMCDataModule(L.LightningDataModule):
         self.num_workers = num_workers
 
         self.__dict__.update(load_data(datadir))
+        self.min_moves = self.fmd["min_moves"]
 
     def setup(self, stage):
         if stage == "fit":
@@ -168,7 +172,7 @@ class MMCDataModule(L.LightningDataModule):
             sampler=RandomSampler(self.trainset, replacement=True),
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            worker_init_fn=lambda id: np.random.seed(id),
+            worker_init_fn=init_worker,
         )
 
     def val_dataloader(self):

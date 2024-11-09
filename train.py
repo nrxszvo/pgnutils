@@ -12,7 +12,7 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 from mmc import MimicChessModule
-from mmcdataset import MMCDataModule
+from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -57,17 +57,6 @@ def main():
     torch.manual_seed(cfgyml.random_seed)
 
     model_args = ModelArgs(cfgyml.model_args)
-    mmc = MimicChessModule(
-        args.outfn,
-        os.path.join(args.save_path, "models"),
-        model_args,
-        cfgyml.lr_scheduler_params,
-        cfgyml.max_steps,
-        cfgyml.val_check_steps,
-        cfgyml.random_seed,
-        cfgyml.strategy,
-        args.ngpu,
-    )
 
     dm = MMCDataModule(
         cfgyml.datadir,
@@ -75,6 +64,19 @@ def main():
         model_args.max_seq_len,
         cfgyml.batch_size,
         os.cpu_count() - 1,
+    )
+    mmc = MimicChessModule(
+        args.outfn,
+        os.path.join(args.save_path, "models"),
+        model_args,
+        dm.min_moves,
+        NOOP,
+        cfgyml.lr_scheduler_params,
+        cfgyml.max_steps,
+        cfgyml.val_check_steps,
+        cfgyml.random_seed,
+        cfgyml.strategy,
+        args.ngpu,
     )
     mmc.fit(dm)
 

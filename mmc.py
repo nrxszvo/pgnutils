@@ -16,6 +16,8 @@ class MimicChessModule(L.LightningModule):
         name: str,
         outdir: str,
         model_args: ModelArgs,
+        min_moves: int,
+        NOOP: int,
         lr_scheduler_params: Dict,
         max_steps: Optional[int] = 100,
         val_check_steps: Optional[int] = 100,
@@ -26,6 +28,8 @@ class MimicChessModule(L.LightningModule):
         super().__init__()
         L.seed_everything(random_seed, workers=True)
         self.model = None
+        self.min_moves = min_moves
+        self.NOOP = NOOP
         self.val_check_steps = val_check_steps
         self.max_steps = max_steps
         self.loss = F.cross_entropy
@@ -105,7 +109,9 @@ class MimicChessModule(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         logits = self([batch["input"]])
-        loss = self.loss(logits, batch["target"])
+        logits = logits[:, self.min_moves :].permute(0, 2, 1)
+        tgt = batch["target"]
+        loss = self.loss(logits, tgt, ignore_index=self.NOOP)
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
         self.log("lr", cur_lr, prog_bar=True, sync_dist=True)
@@ -113,7 +119,9 @@ class MimicChessModule(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         logits = self([batch["input"]])
-        valid_loss = self.loss(logits[:, -1], batch["target"])
+        logits = logits[:, self.min_moves :].permute(0, 2, 1)
+        tgt = batch["target"]
+        valid_loss = self.loss(logits, tgt, ignore_index=self.NOOP)
 
         if torch.isnan(valid_loss):
             raise Exception("Loss is NaN, training stopped.")

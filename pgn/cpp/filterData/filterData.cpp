@@ -115,15 +115,15 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 	RandDS rds(trainp, testp);
 
 	int64_t nGames = 0;
-	auto insertCoords = [&](size_t gs, int idx, int16_t welo, int16_t belo){
+	auto insertCoords = [&](int64_t gStart, int64_t gLength, int16_t welo, int16_t belo){
 		int dsIdx = rds.get();
-		size_t nsamp = idx+2-minMoves;
-		splits[dsIdx].idxData.write((char*)&splits[dsIdx].nSamp, sizeof(int64_t));
-		splits[dsIdx].nSamp += nsamp;
+		
+		splits[dsIdx].idxData.write((char*)&gStart, sizeof(int64_t));
+		splits[dsIdx].idxData.write((char*)&gLength, sizeof(int64_t));
 		splits[dsIdx].idxData.write((char*)&nGames, sizeof(int64_t));
 		splits[dsIdx].nGames++;
 	
-		gsfile.write((char*)&gs, sizeof(gs));
+		gsfile.write((char*)&gStart, sizeof(gStart));
 		elofile.write((char*)&welo, sizeof(welo));
 		elofile.write((char*)&belo, sizeof(belo));
 
@@ -138,7 +138,7 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		int idx = clk.size()-1;	
 		while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
 		if (idx >= minMoves) {
-			insertCoords(gameStart, idx, whiteElo, blackElo);
+			insertCoords(gameStart, idx+1, whiteElo, blackElo);
 		}
 		if (nTotal % 1000 == 0) {
 			std::cout << int(100*(float)nTotal/mrd.getTotalGames()) << "% done\r";
@@ -152,11 +152,12 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 	json md;
 	md["ngames"] = nGames;
 	md["min_moves"] = minMoves;
+	
 	for (int i=0; i<splits.size(); i++) {
 		Split& split = splits[i];
 		split.idxData.close();
-		md[split.name + "_shape"] = {split.nGames,2};
-		md[split.name + "_n"] = split.nSamp;
+		md[split.name + "_shape"] = {split.nGames,3};
+		md[split.name + "_n"] = split.nGames;
 	}
 	std::ofstream mdfile(outdir + "/fmd.json");
 	mdfile << md << std::endl;
