@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, RandomSampler
 import lightning as L
 import json
 
@@ -29,11 +29,9 @@ class MMCDataset(Dataset):
         return len(self.elo_edges)
 
     def __getitem__(self, samp_id):
-        if samp_id > self.seq_len:
-            breakpoint()
         idx = np.searchsorted(self.indices[:, 0], samp_id, side="right") - 1
-        gidx = self.indices[idx, 1]
-        offset = self.min_moves + samp_id - idx
+        gedge, gidx = self.indices[idx]
+        offset = self.min_moves + samp_id - gedge
         gs = self.gs[gidx]
         ge = gs + offset
         gs = max(gs, ge - self.seq_len - 1)
@@ -44,7 +42,11 @@ class MMCDataset(Dataset):
         welo, belo = self.elo[gidx]
         elo = welo if offset % 2 == 1 else belo
         head = self._get_head(elo)
-        return {"input": inp, "target": self.mvids[ge - 1], "head": head}
+        return {
+            "input": inp,
+            "target": self.mvids[ge - 1].astype("int64"),
+            "head": head,
+        }
 
 
 def load_data(dirname):
@@ -106,7 +108,7 @@ class MMCDataModule(L.LightningDataModule):
         self.elo_edges = elo_edges
         self.max_seq_len = max_seq_len
         self.batch_size = batch_size
-        self.num_workers = 0  # num_workers
+        self.num_workers = num_workers
 
         self.__dict__.update(load_data(datadir))
 
@@ -159,9 +161,9 @@ class MMCDataModule(L.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(
             self.trainset,
+            sampler=RandomSampler(self.trainset, replacement=True),
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            shuffle=True,
             worker_init_fn=lambda id: np.random.seed(id),
         )
 

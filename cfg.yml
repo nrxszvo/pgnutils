@@ -1,4 +1,4 @@
-datadir: pgn/test_npy
+datadir: datasets/lichess_300_1200_0924_30_11_801010 
 elo_edges: [1000,1200,1400,1600,1800,2000,2200,2400,2600,2800,3000]
 ntrain: 10
 nval: 2
@@ -13,7 +13,7 @@ model_args:
   ffn_dim_multiplier: 1.5 
   norm_eps: 1.e-5
   rope_theta: 500000
-  max_batch_size: 4 
+  max_batch_size: 32 
   max_seq_len: 32 
 lr_scheduler_params:
   lr: 1.e-3

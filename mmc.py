@@ -104,16 +104,16 @@ class MimicChessModule(L.LightningModule):
         return self.model(insample_y, 0)
 
     def training_step(self, batch, batch_idx):
-        pred = self([batch["input"]])
-        loss = self.loss(pred, batch["target"])
+        logits = self([batch["input"]])
+        loss = self.loss(logits, batch["target"])
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
         self.log("lr", cur_lr, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        pred = self([batch["input"]])
-        valid_loss = self.loss(pred, batch["target"])
+        logits = self([batch["input"]])
+        valid_loss = self.loss(logits[:, -1], batch["target"])
 
         if torch.isnan(valid_loss):
             raise Exception("Loss is NaN, training stopped.")
