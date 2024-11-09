@@ -35,10 +35,14 @@ class MMCDataset(Dataset):
         gs = self.gs[gidx]
         ge = gs + offset
         gs = max(gs, ge - self.seq_len - 1)
+
         inp = np.empty(self.seq_len, dtype="int32")
         n_inp = ge - gs - 1
         inp[: self.seq_len - n_inp] = NOOP
         inp[-n_inp:] = self.mvids[gs : ge - 1]
+        tgt = np.empty(self.seq_len, dtype="int64")
+        tgt[: self.min_moves - 1 + self.seq_len - n_inp - 1] = NOOP
+        tgt[-n_inp - 1 :] = self.mvids[gs + 1 : ge]
         welo, belo = self.elo[gidx]
         elo = welo if offset % 2 == 1 else belo
         head = self._get_head(elo)
