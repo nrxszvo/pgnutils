@@ -3,7 +3,13 @@ import torch
 import torch.nn.functional as F
 from lightning.pytorch.callbacks import ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.loggers import TensorBoardLogger
-from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
+from torch.optim.lr_scheduler import (
+    ReduceLROnPlateau,
+    StepLR,
+    SequentialLR,
+    CosineAnnealingLR,
+    LinearLR,
+)
 
 from model import Transformer, ModelArgs
 
@@ -93,6 +99,24 @@ class MimicChessModule(L.LightningModule):
                 optimizer=optimizer,
                 step_size=step_size,
                 gamma=gamma,
+            )
+            freq = 1
+        elif name == "WarmUpCosine":
+            warmup_steps = self.lr_scheduler_params["warmup_steps"]
+            warmupLR = LinearLR(
+                optimizer=optimizer,
+                start_factor=1 / warmup_steps,
+                end_factor=1,
+                total_iters=warmup_steps,
+            )
+            min_lr = self.lr_scheduler_params["min_lr"]
+            cosineLR = CosineAnnealingLR(
+                optimizer=optimizer, T_max=self.max_steps, eta_min=min_lr
+            )
+            scheduler = SequentialLR(
+                optimizer=optimizer,
+                schedulers=[warmupLR, cosineLR],
+                milestones=[warmup_steps],
             )
             freq = 1
         config = {
