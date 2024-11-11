@@ -43,12 +43,15 @@ class MMCDataset(Dataset):
         tgt = np.empty(self.seq_len - self.min_moves, dtype="int64")
         tgt[: n_inp - self.min_moves] = self.mvids[gs + self.min_moves : gs + n_inp]
         tgt[n_inp - self.min_moves :] = NOOP
-        welo, belo = self.elo[gidx]
-        heads = (self._get_head(welo), self._get_head(belo))
+        # welo, belo = self.elo[gidx]
+        # heads = (self._get_head(welo), self._get_head(belo))
+        tgt[1::2] = NOOP
+
         return {
             "input": inp,
             "target": tgt,
-            "heads": heads,
+            # "heads": heads,
+            # "heads": welo.astype("int32"),
         }
 
 
@@ -169,7 +172,7 @@ class MMCDataModule(L.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(
             self.trainset,
-            sampler=RandomSampler(self.trainset, replacement=True),
+            # sampler=RandomSampler(self.trainset, replacement=True),
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             worker_init_fn=init_worker,

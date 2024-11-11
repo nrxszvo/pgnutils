@@ -64,15 +64,21 @@ class MimicChessModule(L.LightningModule):
             return
         self.model = Transformer(model_args)
 
-        print(f"# model params: {self.num_params():.2e}")
         self.trainer = L.Trainer(callbacks=self.callbacks, **self.trainer_kwargs)
 
     def num_params(self):
         nparams = 0
-        for w in self.model.parameters():
+        nwflops = 0
+        for name, w in self.model.named_parameters():
             if w.requires_grad:
                 nparams += w.numel()
-        return nparams
+                if (
+                    "embeddings" not in name
+                    and "norm" not in name
+                    and "bias" not in name
+                ):
+                    nwflops += w.numel()
+        return nparams, nwflops
 
     def configure_optimizers(self):
         lr = self.lr_scheduler_params["lr"]
@@ -127,11 +133,11 @@ class MimicChessModule(L.LightningModule):
         }
         return {"optimizer": optimizer, "lr_scheduler": config}
 
-    def forward(self, tokens, heads, target=None):
+    def forward(self, tokens, heads=None, target=None):
         return self.model(tokens, 0, heads)
 
     def training_step(self, batch, batch_idx):
-        logits = self(batch["input"], batch["heads"])
+        logits = self(batch["input"])
         logits = logits[:, self.min_moves :].permute(0, 2, 1)
         tgt = batch["target"]
         loss = self.loss(logits, tgt, ignore_index=self.NOOP)
@@ -141,7 +147,7 @@ class MimicChessModule(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        logits = self(batch["input"], batch["heads"])
+        logits = self(batch["input"])
         logits = logits[:, self.min_moves :].permute(0, 2, 1)
         tgt = batch["target"]
         valid_loss = self.loss(logits, tgt, ignore_index=self.NOOP)
