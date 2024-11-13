@@ -30,7 +30,7 @@ if [ ! -d "~/git" ]; then
 fi
 
 if [ ! -z ${GHTOKEN+x} ]; then
-	git clone https://${GHTOKEN}@github.com/nrxszvo/mimicChess.git
+	git clone --recurse-submodules https://${GHTOKEN}@github.com/nrxszvo/mimicChess.git
 	cd mimicChess
 	if [ ! -e "datasets" ]; then
 		ln -s ~/mimicChessData/datasets .
