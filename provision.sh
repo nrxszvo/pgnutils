@@ -23,10 +23,29 @@ conda install -y "numpy<2.0" pyyaml pytorch torchvision torchaudio pytorch-cuda=
 conda init
 pip install fairscale
 
-ln -s ~/mimicChessData/datasets .
+if [ ! -e "datasets" ]; then
+	ln -s ~/mimicChessData/datasets .
+fi
+
+curl -fsSL https://deb.nodesource.com/setup_23.x -o nodesource_setup.sh
+sudo -E bash nodesource_setup.sh
+sudo apt-get install -y nodejs
+curl -fLo ~/.vim/autoload/plug.vim --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+sudo add-apt-repository -y ppa:jonathonf/vim
+sudo apt update
+sudo apt install -y vim
+
 if [ ! -d "/home/ubuntu/git/vimrc" ]; then
 	cd /home/ubuntu/git
 	git clone https://github.com/nrxszvo/vimrc.git
 	cp vimrc/vimrc ~/.vimrc
 fi
+
 echo "set -g mouse on" > ~/.tmux.conf
+
+if [ -z ${MYNAME+x} ]; then
+	echo "git name and email not specified; skipping git config"
+else
+	git config --global user.name ${MYNAME} 
+	git config --global user.email ${MYEMAIL} 
+fi
