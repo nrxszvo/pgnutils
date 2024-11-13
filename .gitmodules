@@ -4,6 +4,3 @@
 [submodule "pgn/zstd"]
 	path = pgn/cpp/zstd
 	url = git@github.com:facebook/zstd.git
-[submodule "pgn/cpp/json"]
-	path = pgn/cpp/json
-	url = git@github.com:nlohmann/json.git
