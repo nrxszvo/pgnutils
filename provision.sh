@@ -35,6 +35,7 @@ if [ ! -d "/home/ubuntu/git/mimicChess" ]; then
 	if [ ! -e "datasets" ]; then
 		ln -s ~/mimicChessData/datasets .
 	fi
+	git remote set-url origin https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git
 	cd /home/ubuntu
 fi
 
