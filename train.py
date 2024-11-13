@@ -38,6 +38,7 @@ def main():
     os.makedirs(args.save_path, exist_ok=True)
     shutil.copyfile(args.cfg, f"{args.save_path}/{args.outfn}.yml")
     model_parallel_size = 1
+    torch.set_float32_matmul_precision("medium")
     if not torch.distributed.is_initialized():
         if torch.cuda.is_available():
             torch.distributed.init_process_group("nccl")

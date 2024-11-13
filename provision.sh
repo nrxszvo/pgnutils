@@ -22,4 +22,11 @@ conda install -c anaconda -y python=${PY_VER}
 conda install -y "numpy<2.0" pyyaml pytorch torchvision torchaudio pytorch-cuda=12.4 lightning tensorboard -c pytorch -c nvidia
 conda init
 pip install fairscale
+
 ln -s ~/mimicChessData/datasets .
+if [ ! -d "/home/ubuntu/git/vimrc" ]; then
+	cd /home/ubuntu/git
+	git clone https://github.com/nrxszvo/vimrc.git
+	cp vimrc/vimrc ~/.vimrc
+fi
+echo "set -g mouse on" > ~/.tmux.conf

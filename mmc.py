@@ -32,6 +32,7 @@ class MimicChessModule(L.LightningModule):
         devices: Optional[int] = 1,
     ):
         super().__init__()
+       
         L.seed_everything(random_seed, workers=True)
         self.model = None
         self.min_moves = min_moves
@@ -49,6 +50,7 @@ class MimicChessModule(L.LightningModule):
             "check_val_every_n_epoch": None,
             "strategy": strategy,
             "devices": devices,
+            "precision": "bf16-mixed" if torch.cuda.is_bf16_supported() else 16,
         }
         self.callbacks = [
             TQDMProgressBar(),

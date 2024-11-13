@@ -2,8 +2,8 @@
 datadir: datasets/lichess_300_1200_0924/split_30_11_801010
 elo_edges: [1200,1400,1600,1800,2000,2200,2400]
 model_args:
-  dim: 256 
-  n_layers: 8
+  dim: 1024 
+  n_layers: 16 
   n_heads: 32
   n_kv_heads: 8 
   vocab_size: 2048
@@ -20,6 +20,6 @@ lr_scheduler_params:
   warmup_steps: 8000
 batch_size: 256
 max_steps: 1.e+6 
-val_check_steps: 5000
+val_check_steps: 200
 strategy: ddp
 random_seed: 0

@@ -106,28 +106,24 @@ class Attention(nn.Module):
             args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
-            init_method=lambda x: x,
         )
         self.wk = ColumnParallelLinear(
             args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
-            init_method=lambda x: x,
         )
         self.wv = ColumnParallelLinear(
             args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
-            init_method=lambda x: x,
         )
         self.wo = RowParallelLinear(
             args.n_heads * self.head_dim,
             args.dim,
             bias=False,
             input_is_parallel=True,
-            init_method=lambda x: x,
         )
 
     def forward(
