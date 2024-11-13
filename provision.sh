@@ -24,17 +24,18 @@ conda init
 pip install fairscale
 
 
-if [ ! -d "~/git" ]; then
-	mkdir "~/git"
-	cd ~/git
+if [ ! -d "/home/ubuntu/git" ]; then
+	mkdir "/home/ubuntu/git"
 fi
 
-if [ ! -z ${GHTOKEN+x} ]; then
-	git clone --recurse-submodules https://${GHTOKEN}@github.com/nrxszvo/mimicChess.git
+if [ ! -d "/home/ubuntu/git/mimicChess" ]; then
+	cd git
+	git clone https://${GHTOKEN}@github.com/nrxszvo/mimicChess.git
 	cd mimicChess
 	if [ ! -e "datasets" ]; then
 		ln -s ~/mimicChessData/datasets .
 	fi
+	cd /home/ubuntu
 fi
 
 if ! command -v npm 2>&1 >/dev/null
@@ -59,6 +60,7 @@ if [ ! -d "/home/ubuntu/git/vimrc" ]; then
 	cd /home/ubuntu/git
 	git clone https://github.com/nrxszvo/vimrc.git
 	cp vimrc/vimrc ~/.vimrc
+	cp vimrc/coc-settings.json ~/.vim/coc-settings.json
 fi
 
 echo "set -g mouse on" > ~/.tmux.conf
