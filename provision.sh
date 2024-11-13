@@ -23,17 +23,37 @@ conda install -y "numpy<2.0" pyyaml pytorch torchvision torchaudio pytorch-cuda=
 conda init
 pip install fairscale
 
-if [ ! -e "datasets" ]; then
-	ln -s ~/mimicChessData/datasets .
+
+if [ ! -d "~/git" ]; then
+	mkdir "~/git"
+	cd ~/git
 fi
 
-curl -fsSL https://deb.nodesource.com/setup_23.x -o nodesource_setup.sh
-sudo -E bash nodesource_setup.sh
-sudo apt-get install -y nodejs
-curl -fLo ~/.vim/autoload/plug.vim --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-sudo add-apt-repository -y ppa:jonathonf/vim
-sudo apt update
-sudo apt install -y vim
+if [ ! -z ${GHTOKEN+x} ]; then
+	git clone https://${GHTOKEN}@github.com/nrxszvo/mimicChess.git
+	cd mimicChess
+	if [ ! -e "datasets" ]; then
+		ln -s ~/mimicChessData/datasets .
+	fi
+fi
+
+if ! command -v npm 2>&1 >/dev/null
+then
+	curl -fsSL https://deb.nodesource.com/setup_23.x -o nodesource_setup.sh
+	sudo -E bash nodesource_setup.sh
+	sudo apt-get install -y nodejs
+fi
+if ! command -v yarn 2>&1 > /dev/null
+then
+	sudo npm install --global yarn
+fi
+
+if [ ! -e "~/.vim/autoload/plug.vim" ]; then
+	curl -fLo ~/.vim/autoload/plug.vim --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+	sudo add-apt-repository -y ppa:jonathonf/vim
+	sudo apt update
+	sudo apt install -y vim
+fi
 
 if [ ! -d "/home/ubuntu/git/vimrc" ]; then
 	cd /home/ubuntu/git
