@@ -67,7 +67,7 @@ class MMCDataset(Dataset):
         inp[:] = self.mvids[gs : gs + n_inp]
 
         tgt = np.empty(n_inp - self.min_moves, dtype="int64")
-        tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp]
+        tgt[:] = self.mvids[gs + self.min_moves + 1 : gs + n_inp + 1]
         # welo, belo = self.elo[gidx]
         # heads = (self._get_head(welo), self._get_head(belo))
 
