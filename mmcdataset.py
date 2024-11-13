@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import torch
-from torch.utils.data import Dataset, DataLoader, RandomSampler
+from torch.utils.data import Dataset, DataLoader
 import lightning as L
 import json
 
@@ -12,12 +12,38 @@ def init_worker(seed):
     np.random.seed(seed)
 
 
+def collate_fn(batch):
+    maxinp = 0
+    maxtgt = 0
+    for d in batch:
+        inp = d["input"]
+        tgt = d["target"]
+        maxinp = max(maxinp, inp.shape[0])
+        maxtgt = max(maxtgt, tgt.shape[0])
+
+    bs = len(batch)
+    inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
+    targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
+
+    for i, d in enumerate(batch):
+        inp = d["input"]
+        tgt = d["target"]
+        ni = inp.shape[0]
+        nt = tgt.shape[0]
+        inputs[i, :ni] = torch.from_numpy(inp)
+        targets[i, :nt] = torch.from_numpy(tgt)
+
+    return {"input": inputs, "target": targets}
+
+
 class MMCDataset(Dataset):
-    def __init__(self, seq_len, min_moves, nsamp, indices, gs, elo, mvids, elo_edges):
+    def __init__(
+        self, seq_len, min_moves, dataset_p, indices, gs, elo, mvids, elo_edges
+    ):
         super().__init__()
         self.seq_len = seq_len
         self.min_moves = min_moves
-        self.nsamp = nsamp
+        self.nsamp = int(dataset_p * len(indices))
         self.indices = indices
         self.gs = gs
         self.elo = elo
@@ -34,18 +60,16 @@ class MMCDataset(Dataset):
         return len(self.elo_edges)
 
     def __getitem__(self, idx):
+        idx = int(len(self.indices) * np.random.random())
         gs, nmoves, gidx = self.indices[idx]
-        inp = np.empty(self.seq_len, dtype="int32")
         n_inp = min(self.seq_len, nmoves - 1)
-        inp[:n_inp] = self.mvids[gs : gs + n_inp]
-        inp[n_inp:] = NOOP
+        inp = np.empty(n_inp, dtype="int32")
+        inp[:] = self.mvids[gs : gs + n_inp]
 
-        tgt = np.empty(self.seq_len - self.min_moves, dtype="int64")
-        tgt[: n_inp - self.min_moves] = self.mvids[gs + self.min_moves : gs + n_inp]
-        tgt[n_inp - self.min_moves :] = NOOP
+        tgt = np.empty(n_inp - self.min_moves, dtype="int64")
+        tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp]
         # welo, belo = self.elo[gidx]
         # heads = (self._get_head(welo), self._get_head(belo))
-        tgt[1::2] = NOOP
 
         return {
             "input": inp,
@@ -109,6 +133,7 @@ class MMCDataModule(L.LightningDataModule):
     def __init__(
         self,
         datadir,
+        dataset_p,
         elo_edges,
         max_seq_len,
         batch_size,
@@ -122,13 +147,14 @@ class MMCDataModule(L.LightningDataModule):
 
         self.__dict__.update(load_data(datadir))
         self.min_moves = self.fmd["min_moves"]
+        self.dataset_p = dataset_p
 
     def setup(self, stage):
         if stage == "fit":
             self.trainset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
-                self.fmd["train_n"],
+                self.dataset_p,
                 self.train,
                 self.gs,
                 self.elo,
@@ -138,7 +164,7 @@ class MMCDataModule(L.LightningDataModule):
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
-                self.fmd["val_n"],
+                self.dataset_p,
                 self.val,
                 self.gs,
                 self.elo,
@@ -149,7 +175,7 @@ class MMCDataModule(L.LightningDataModule):
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
-                self.fmd["val_n"],
+                self.dataset_p,
                 self.val,
                 self.gs,
                 self.elo,
@@ -161,7 +187,7 @@ class MMCDataModule(L.LightningDataModule):
             self.testset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
-                self.fmd["test_n"],
+                self.dataset_p,
                 self.test,
                 self.gs,
                 self.elo,
@@ -172,7 +198,7 @@ class MMCDataModule(L.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(
             self.trainset,
-            # sampler=RandomSampler(self.trainset, replacement=True),
+            collate_fn=collate_fn,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             worker_init_fn=init_worker,
@@ -180,12 +206,18 @@ class MMCDataModule(L.LightningDataModule):
 
     def val_dataloader(self):
         return DataLoader(
-            self.valset, batch_size=self.batch_size, num_workers=self.num_workers
+            self.valset,
+            collate_fn=collate_fn,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
         )
 
     def predict_dataloader(self):
         return DataLoader(
-            self.testset, batch_size=self.batch_size, num_workers=self.num_workers
+            self.testset,
+            collate_fn=collate_fn,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
         )
 
     def test_dataloader(self):
