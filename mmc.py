@@ -1,19 +1,19 @@
+from typing import Dict, Optional
+
 import lightning as L
 import torch
 import torch.nn.functional as F
 from lightning.pytorch.callbacks import ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import (
-    ReduceLROnPlateau,
-    StepLR,
-    SequentialLR,
     CosineAnnealingLR,
     LinearLR,
+    ReduceLROnPlateau,
+    SequentialLR,
+    StepLR,
 )
 
-from model import Transformer, ModelArgs
-
-from typing import Optional, Dict
+from model import ModelArgs, Transformer
 
 
 class MimicChessModule(L.LightningModule):
@@ -32,7 +32,7 @@ class MimicChessModule(L.LightningModule):
         devices: Optional[int] = 1,
     ):
         super().__init__()
-       
+
         L.seed_everything(random_seed, workers=True)
         self.model = None
         self.min_moves = min_moves
@@ -160,18 +160,33 @@ class MimicChessModule(L.LightningModule):
         self.log("valid_loss", valid_loss, prog_bar=True, sync_dist=True)
         return valid_loss
 
-    def get_top_p(self, probs, p):
+    def sample_top_n(self, probs, p, n):
+        probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
+        probs_sum = torch.cumsum(probs_sort, dim=-1)
+        mask = probs_sum - probs_sort > p
+        probs_idx[mask] = self.NOOP
+        return probs_idx[:, :, :n]
+
+    def sample_top_p(self, probs, p, tgt):
         probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
         probs_sum = torch.cumsum(probs_sort, dim=-1)
         mask = probs_sum - probs_sort > p
         probs_sort[mask] = 0.0
         probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-        return probs_sort
+        bs, seqlen, nclass = probs_sort.shape
+        next_token = torch.multinomial(
+            probs_sort.reshape(-1, nclass), num_samples=1
+        ).reshape(bs, seqlen, 1)
+        next_token = torch.gather(probs_idx, -1, next_token)
+        next_token[tgt == self.NOOP] = self.NOOP
+        return next_token
 
     def predict_step(self, batch, batch_idx):
-        logits = self(batch["input"], batch["heads"])
+        logits = self(batch["input"])
+        tgt = batch["target"]
         probs = torch.softmax(logits[:, self.min_moves :], dim=-1)
-        return self.get_top_p(probs, 0.01)
+        tokens = self.sample_top_n(probs, 0.01, 3)
+        return tokens, tgt.unsqueeze(-1)
 
     def fit(self, datamodule):
         self.trainer.fit(self, datamodule=datamodule)
@@ -179,22 +194,9 @@ class MimicChessModule(L.LightningModule):
 
     def predict(self, datamodule):
         tkargs = self.trainer_kwargs
-        tkargs["strategy"] = "auto"
-        tkargs["devices"] = 1
         trainer = L.Trainer(callbacks=[TQDMProgressBar()], **tkargs)
-        pred = trainer.predict(self, datamodule)
-
-        y_true = datamodule.testset.series[:, self.input_size :]
-        nseries, npts, ndim = y_true.shape
-        # unfold = torch.nn.Unfold((self.h, 1))
-        # y_true = unfold(yt_raw.permute(0, 2, 1).unsqueeze(-1)).permute(0, 2, 1)
-        # y_true = y_true.reshape(nseries, -1, ndim, self.h).permute(0, 1, 3, 2)
-        # y_true = y_true[:, :: self.stride]
-
-        y_hat = torch.cat(pred, dim=0)
-        y_hat = y_hat.reshape(nseries, -1, self.h, ndim)
-
-        return y_hat.numpy(), y_true
+        outputs = trainer.predict(self, datamodule)
+        return outputs
 
     def validate(self, datamodule):
         tkargs = self.trainer_kwargs
