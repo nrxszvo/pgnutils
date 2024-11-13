@@ -3,7 +3,7 @@
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/flags/usage.h"
-#include "nlohmann/json.hpp"
+#include "json.hpp"
 #include <fstream>
 #include <iostream>
 #include <random>
