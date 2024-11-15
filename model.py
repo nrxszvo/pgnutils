@@ -219,7 +219,7 @@ class TransformerBlock(nn.Module):
         return out
 
 
-class TransformerCore(nn.Module):
+class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
         self.params = params
@@ -239,10 +239,9 @@ class TransformerCore(nn.Module):
             params.max_seq_len * 2,
             params.rope_theta,
         )
+        self.output = ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
 
-    def forward(
-        self, tokens: torch.Tensor, start_pos: int, heads: Optional[torch.Tensor]
-    ):
+    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
@@ -257,27 +256,5 @@ class TransformerCore(nn.Module):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        return h
-
-
-class Transformer(TransformerCore):
-    def __init__(self, params: ModelArgs):
-        super().__init__(params)
-        self.output = ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
-
-    def forward(self, tokens: torch.Tensor):
-        h = super(tokens, 0)
-        return self.output(h).float()
-
-
-class MimicChessHead(nn.Module):
-    def __init__(self, params: ModelArgs):
-        super().__init__()
-        self.core = TransformerCore(params)
-        for param in self.core.parameters():
-            param.requires_grad = False
-        self.head = ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
-
-    def forward(self, tokens: torch.Tensor):
-        h = self.core(tokens, 0)
-        return self.head(h).float()
+        output = self.output(h).float()
+        return output

@@ -14,7 +14,7 @@ from torch.optim.lr_scheduler import (
     StepLR,
 )
 
-from model import ModelArgs, Transformer, MimicChessHead
+from model import ModelArgs, Transformer
 
 
 @dataclass
@@ -32,12 +32,13 @@ class MMCModuleArgs:
     devices: Optional[int]
 
 
-class MimicChessBaseModule(L.LightningModule):
+class MimicChessCoreModule(L.LightningModule):
     def __init__(self, params: MMCModuleArgs):
         super().__init__()
         self.params = params
         L.seed_everything(params.random_seed, workers=True)
         self.model = None
+        self.model_args = params.model_args
         self.min_moves = params.min_moves
         self.NOOP = params.NOOP
         self.val_check_steps = params.val_check_steps
@@ -69,7 +70,9 @@ class MimicChessBaseModule(L.LightningModule):
         self.trainer = L.Trainer(callbacks=self.callbacks, **self.trainer_kwargs)
 
     def _init_model(self):
-        raise NotImplementedError
+        if self.model is not None:
+            return
+        self.model = Transformer(self.model_args)
 
     def num_params(self):
         nparams = 0
@@ -112,6 +115,12 @@ class MimicChessBaseModule(L.LightningModule):
                 gamma=gamma,
             )
             freq = 1
+        elif name == "Cosine":
+            min_lr = self.lr_scheduler_params["min_lr"]
+            scheduler = CosineAnnealingLR(
+                optimizer=optimizer, T_max=self.max_steps, eta_min=min_lr
+            )
+            freq = 1
         elif name == "WarmUpCosine":
             warmup_steps = self.lr_scheduler_params["warmup_steps"]
             warmupLR = LinearLR(
@@ -138,8 +147,8 @@ class MimicChessBaseModule(L.LightningModule):
         }
         return {"optimizer": optimizer, "lr_scheduler": config}
 
-    def forward(self, tokens, heads=None, target=None):
-        return self.model(tokens, 0, heads)
+    def forward(self, tokens):
+        return self.model(tokens)
 
     def training_step(self, batch, batch_idx):
         logits = self(batch["input"])
@@ -208,21 +217,19 @@ class MimicChessBaseModule(L.LightningModule):
         return super().on_save_checkpoint(checkpoint)
 
 
-class MimicChessCoreModule(MimicChessBaseModule):
-    def _init_model(self):
-        if self.model is not None:
-            return
-        self.model = Transformer(self.model_args)
-
-
-class MimicChessHeadModule(MimicChessBaseModule):
+class MimicChessHeadModule(MimicChessCoreModule):
     def __init__(self, params: MMCModuleArgs, core_ckpt: str):
         self.core_ckpt = core_ckpt
         super().__init__(params)
 
     def _init_model(self):
-        if self.model is not None:
-            return
-        self.model = MimicChessHead(self.model_args)
+        super()._init_model()
+        for name, param in self.model.named_parameters():
+            if "output" not in name:
+                param.requires_grad = False
+
         ckpt = torch.load(self.core_ckpt, map_location="cpu", weights_only=True)
-        self.model.core.load_state_dict(ckpt, strict=True)
+        updated = {}
+        for k, v in ckpt["state_dict"].items():
+            updated[k.replace("model.", "")] = v
+        self.model.load_state_dict(updated, strict=True)

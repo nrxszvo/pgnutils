@@ -2,11 +2,34 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def game_lengths(npydir):
-    md = np.load(f"{npydir}/md.npy", allow_pickle=True).item()
-    gs = np.memmap(
-        f"{npydir}/gamestarts.npy", mode="r", dtype="int64", shape=md["ngames"]
-    )
+def elo_hist(
+    md,
+    welos,
+    belos,
+    edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, float("inf")],
+):
+    x = np.arange(len(edges) - 1)
+    width = 0.33
+    mult = 0
+    ax = plt.figure().add_subplot()
+    hw, eb = np.histogram(welos, edges)
+    hb, eb = np.histogram(belos, edges)
+    for name, data in [("white", hw), ("black", hb)]:
+        offset = width * mult
+        rects = ax.bar(x + offset, data, width, label=name)
+        # ax.bar_label(rects, padding=3)
+        mult += 1
+    ax.set_ylabel("# games")
+    ax.set_yscale("log")
+    edge_labels = [str(e) for e in edges[1:]]
+    edge_labels[-1] = f">{edge_labels[-2]}"
+    ax.set_xticks(x + width, edge_labels)
+    ax.legend(loc="upper right")
+
+    plt.savefig("elos.png", dpi=500)
+
+
+def game_lengths(md, gs):
     gamelengths = np.diff(gs)
     mean = np.mean(gamelengths)
     std = np.var(gamelengths) ** 0.5
@@ -18,7 +41,22 @@ def game_lengths(npydir):
     plt.savefig("gamelengths.png", dpi=500)
 
 
+def load_data(npydir):
+    md = np.load(f"{npydir}/md.npy", allow_pickle=True).item()
+    gs = np.memmap(
+        f"{npydir}/gamestarts.npy", mode="r", dtype="int64", shape=md["ngames"]
+    )
+    welos = np.memmap(
+        f"{npydir}/welos.npy", mode="r", dtype="int16", shape=md["ngames"]
+    )
+    belos = np.memmap(
+        f"{npydir}/welos.npy", mode="r", dtype="int16", shape=md["ngames"]
+    )
+    return md, gs, welos, belos
+
+
 if __name__ == "__main__":
     import sys
 
-    game_lengths(sys.argv[1])
+    md, gs, welos, belos = load_data(sys.argv[1])
+    elo_hist(md, welos, belos)
