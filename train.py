@@ -11,7 +11,7 @@ from fairscale.nn.model_parallel.initialize import (
     initialize_model_parallel,
     model_parallel_is_initialized,
 )
-from mmc import MimicChessModule
+from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
 from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
 
@@ -30,13 +30,20 @@ parser.add_argument(
 parser.add_argument(
     "--ngpu", default=1, type=int, help="number of gpus per training trial"
 )
+parser.add_argument(
+    "--train_head",
+    action="store_true",
+    help="Train the head for a specific elo range using an existing MMC core checkpoint",
+)
+parser.add_argument(
+    "--core_ckpt",
+    default=None,
+    help="core MMC checkpoint to use when training a head output",
+)
+parser.add_argument("--elo", default=None, help="elo tag for elo-specific head output")
 
 
-def main():
-    args = parser.parse_args()
-    cfgyml = get_config(args.cfg)
-    os.makedirs(args.save_path, exist_ok=True)
-    shutil.copyfile(args.cfg, f"{args.save_path}/{args.outfn}.yml")
+def torch_init():
     model_parallel_size = 1
     torch.set_float32_matmul_precision("medium")
     if not torch.distributed.is_initialized():
@@ -55,22 +62,40 @@ def main():
         if local_rank > 0:
             sys.stdout = open(os.devnull, "w")
 
+
+def main():
+    args = parser.parse_args()
+    cfgyml = get_config(args.cfg)
+
+    if args.train_head:
+        save_path = os.path.join(args.save_path, "heads", args.elo)
+        with open(os.path.join(save_path, "core_ckpt.txt"), "w") as f:
+            f.writeline(args.core_ckpt)
+    else:
+        save_path = os.path.join(args.save_path, "core")
+
+    os.makedirs(save_path, exist_ok=True)
+    shutil.copyfile(args.cfg, os.path.join(save_path, f"{args.outfn}.yml"))
+
+    torch_init()
+
     torch.manual_seed(cfgyml.random_seed)
 
     model_args = ModelArgs(cfgyml.model_args)
-    model_args.n_output_heads = len(cfgyml.elo_edges) + 1
+
+    datadir = cfgyml.datadir
+    if args.train_head:
+        datadir = os.path.join(datadir, args.elo)
 
     dm = MMCDataModule(
-        cfgyml.datadir,
-        cfgyml.dataset_p,
-        cfgyml.elo_edges,
+        datadir,
         model_args.max_seq_len,
         cfgyml.batch_size,
         os.cpu_count() - 1,
     )
-    mmc = MimicChessModule(
+    module_args = MMCModuleArgs(
         args.outfn,
-        os.path.join(args.save_path, "models"),
+        os.path.join(save_path, "ckpt"),
         model_args,
         dm.min_moves,
         NOOP,
@@ -81,6 +106,12 @@ def main():
         cfgyml.strategy,
         args.ngpu,
     )
+
+    if args.train_head:
+        mmc = MimicChessHeadModule(module_args, args.core_ckpt)
+    else:
+        mmc = MimicChessCoreModule(module_args)
+
     nweights, nflpweights = mmc.num_params()
     est_flops = 6 * nflpweights * cfgyml.batch_size * model_args.max_seq_len
     print(f"# model params: {nweights:.2e}")

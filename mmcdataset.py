@@ -37,45 +37,36 @@ def collate_fn(batch):
 
 
 class MMCDataset(Dataset):
-    def __init__(
-        self, seq_len, min_moves, dataset_p, indices, gs, elo, mvids, elo_edges
-    ):
+    def __init__(self, seq_len, min_moves, indices, mvids, train_head=False):
         super().__init__()
         self.seq_len = seq_len
         self.min_moves = min_moves
-        self.nsamp = int(dataset_p * len(indices))
+        self.nsamp = len(indices)
         self.indices = indices
-        self.gs = gs
-        self.elo = elo
         self.mvids = mvids
-        self.elo_edges = elo_edges
+        self.train_head = train_head
 
     def __len__(self):
         return self.nsamp
 
-    def _get_head(self, elo):
-        for i, upper in enumerate(self.elo_edges):
-            if elo < upper:
-                return i
-        return len(self.elo_edges)
-
     def __getitem__(self, idx):
-        idx = int(len(self.indices) * np.random.random())
-        gs, nmoves, gidx = self.indices[idx]
+        gs, nmoves, code = self.indices[idx]
         n_inp = min(self.seq_len, nmoves - 1)
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
 
         tgt = np.empty(n_inp - self.min_moves, dtype="int64")
         tgt[:] = self.mvids[gs + self.min_moves + 1 : gs + n_inp + 1]
-        # welo, belo = self.elo[gidx]
-        # heads = (self._get_head(welo), self._get_head(belo))
+
+        if self.train_head:
+            if code == 0:
+                tgt[1::2] = NOOP
+            elif code == 1:
+                tgt[::2] = NOOP
 
         return {
             "input": inp,
             "target": tgt,
-            # "heads": heads,
-            # "heads": welo.astype("int32"),
         }
 
 
@@ -90,18 +81,6 @@ def load_data(dirname):
     return {
         "md": md,
         "fmd": fmd,
-        "gs": np.memmap(
-            os.path.join(dirname, "gs.npy"),
-            mode="r",
-            dtype="int64",
-            shape=fmd["ngames"],
-        ),
-        "elo": np.memmap(
-            os.path.join(dirname, "elo.npy"),
-            mode="r",
-            dtype="int16",
-            shape=(fmd["ngames"], 2),
-        ),
         "mvids": np.memmap(
             os.path.join(dirname, "mvids.npy"),
             mode="r",
@@ -133,66 +112,46 @@ class MMCDataModule(L.LightningDataModule):
     def __init__(
         self,
         datadir,
-        dataset_p,
-        elo_edges,
         max_seq_len,
         batch_size,
         num_workers,
     ):
         super().__init__()
-        self.elo_edges = elo_edges
         self.max_seq_len = max_seq_len
         self.batch_size = batch_size
         self.num_workers = num_workers
 
         self.__dict__.update(load_data(datadir))
         self.min_moves = self.fmd["min_moves"]
-        self.dataset_p = dataset_p
 
     def setup(self, stage):
         if stage == "fit":
             self.trainset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
-                self.dataset_p,
                 self.train,
-                self.gs,
-                self.elo,
                 self.mvids,
-                self.elo_edges,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
-                self.dataset_p,
                 self.val,
-                self.gs,
-                self.elo,
                 self.mvids,
-                self.elo_edges,
             )
         if stage == "validate":
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
-                self.dataset_p,
                 self.val,
-                self.gs,
-                self.elo,
                 self.mvids,
-                self.elo_edges,
             )
 
         if stage in ["test", "predict"]:
             self.testset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
-                self.dataset_p,
                 self.test,
-                self.gs,
-                self.elo,
                 self.mvids,
-                self.elo_edges,
             )
 
     def train_dataloader(self):

@@ -1,4 +1,5 @@
 from typing import Dict, Optional
+from dataclasses import dataclass
 
 import lightning as L
 import torch
@@ -13,60 +14,62 @@ from torch.optim.lr_scheduler import (
     StepLR,
 )
 
-from model import ModelArgs, Transformer
+from model import ModelArgs, Transformer, MimicChessHead
 
 
-class MimicChessModule(L.LightningModule):
-    def __init__(
-        self,
-        name: str,
-        outdir: str,
-        model_args: ModelArgs,
-        min_moves: int,
-        NOOP: int,
-        lr_scheduler_params: Dict,
-        max_steps: Optional[int] = 100,
-        val_check_steps: Optional[int] = 100,
-        random_seed: Optional[int] = 0,
-        strategy: Optional[str] = "auto",
-        devices: Optional[int] = 1,
-    ):
+@dataclass
+class MMCModuleArgs:
+    name: str
+    outdir: str
+    model_args: ModelArgs
+    min_moves: int
+    NOOP: int
+    lr_scheduler_params: Dict
+    max_steps: int
+    val_check_steps: int
+    random_seed: Optional[int]
+    strategy: Optional[str]
+    devices: Optional[int]
+
+
+class MimicChessBaseModule(L.LightningModule):
+    def __init__(self, params: MMCModuleArgs):
         super().__init__()
-
-        L.seed_everything(random_seed, workers=True)
+        self.params = params
+        L.seed_everything(params.random_seed, workers=True)
         self.model = None
-        self.min_moves = min_moves
-        self.NOOP = NOOP
-        self.val_check_steps = val_check_steps
-        self.max_steps = max_steps
+        self.min_moves = params.min_moves
+        self.NOOP = params.NOOP
+        self.val_check_steps = params.val_check_steps
+        self.max_steps = params.max_steps
         self.loss = F.cross_entropy
-        logger = TensorBoardLogger(".", name="L", version=name)
-        val_check_interval = min(val_check_steps, max_steps)
-        self.lr_scheduler_params = lr_scheduler_params
+        logger = TensorBoardLogger(".", name="L", version=params.name)
+        val_check_interval = min(params.val_check_steps, params.max_steps)
+        self.lr_scheduler_params = params.lr_scheduler_params
         self.trainer_kwargs = {
             "logger": logger,
-            "max_steps": max_steps,
+            "max_steps": params.max_steps,
             "val_check_interval": val_check_interval,
             "check_val_every_n_epoch": None,
-            "strategy": strategy,
-            "devices": devices,
+            "strategy": params.strategy,
+            "devices": params.devices,
             "precision": "bf16-mixed" if torch.cuda.is_bf16_supported() else 16,
         }
         self.callbacks = [
             TQDMProgressBar(),
             ModelCheckpoint(
-                dirpath=outdir,
-                filename=name,
+                dirpath=params.outdir,
+                filename=params.name,
                 save_weights_only=True,
                 every_n_train_steps=val_check_interval,
             ),
         ]
 
-        if self.model is not None:
-            return
-        self.model = Transformer(model_args)
-
+        self._init_model()
         self.trainer = L.Trainer(callbacks=self.callbacks, **self.trainer_kwargs)
+
+    def _init_model(self):
+        raise NotImplementedError
 
     def num_params(self):
         nparams = 0
@@ -160,12 +163,9 @@ class MimicChessModule(L.LightningModule):
         self.log("valid_loss", valid_loss, prog_bar=True, sync_dist=True)
         return valid_loss
 
-    def sample_top_n(self, probs, p, n):
+    def sample_top_n(self, probs, n):
         probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
-        probs_sum = torch.cumsum(probs_sort, dim=-1)
-        mask = probs_sum - probs_sort > p
-        probs_idx[mask] = self.NOOP
-        return probs_idx[:, :, :n]
+        return probs_idx[:, :, :n], probs_sort[:, :, :n]
 
     def sample_top_p(self, probs, p, tgt):
         probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
@@ -185,26 +185,18 @@ class MimicChessModule(L.LightningModule):
         logits = self(batch["input"])
         tgt = batch["target"]
         probs = torch.softmax(logits[:, self.min_moves :], dim=-1)
-        tokens = self.sample_top_n(probs, 0.01, 3)
-        return tokens, tgt.unsqueeze(-1)
+        tokens, probs = self.sample_top_n(probs, n=3)
+        return tokens, probs, tgt.unsqueeze(-1)
 
     def fit(self, datamodule):
         self.trainer.fit(self, datamodule=datamodule)
         print(torch.cuda.memory_summary())
 
-    def predict(self, datamodule):
+    def predict(self, datamodule, p, n):
         tkargs = self.trainer_kwargs
         trainer = L.Trainer(callbacks=[TQDMProgressBar()], **tkargs)
         outputs = trainer.predict(self, datamodule)
         return outputs
-
-    def validate(self, datamodule):
-        tkargs = self.trainer_kwargs
-        tkargs["strategy"] = "auto"
-        tkargs["devices"] = 1
-        trainer = L.Trainer(callbacks=[TQDMProgressBar()], **tkargs)
-        res = trainer.validate(self, datamodule)
-        return res
 
     def on_save_checkpoint(self, checkpoint):
         """
@@ -214,3 +206,23 @@ class MimicChessModule(L.LightningModule):
             state_dict = self.trainer.model.state_dict()
             checkpoint["state_dict"] = state_dict
         return super().on_save_checkpoint(checkpoint)
+
+
+class MimicChessCoreModule(MimicChessBaseModule):
+    def _init_model(self):
+        if self.model is not None:
+            return
+        self.model = Transformer(self.model_args)
+
+
+class MimicChessHeadModule(MimicChessBaseModule):
+    def __init__(self, params: MMCModuleArgs, core_ckpt: str):
+        self.core_ckpt = core_ckpt
+        super().__init__(params)
+
+    def _init_model(self):
+        if self.model is not None:
+            return
+        self.model = MimicChessHead(self.model_args)
+        ckpt = torch.load(self.core_ckpt, map_location="cpu", weights_only=True)
+        self.model.core.load_state_dict(ckpt, strict=True)

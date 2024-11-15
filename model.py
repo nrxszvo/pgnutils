@@ -219,7 +219,7 @@ class TransformerBlock(nn.Module):
         return out
 
 
-class Transformer(nn.Module):
+class TransformerCore(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
         self.params = params
@@ -233,13 +233,6 @@ class Transformer(nn.Module):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        # self.heads = nn.ModuleList(
-        #    [
-        #        ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
-        #        for _ in range(params.n_output_heads)
-        #    ]
-        # )
-        self.output = ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -261,31 +254,30 @@ class Transformer(nn.Module):
 
             mask = torch.triu(mask, diagonal=1)
 
-            # When performing key-value caching, we compute the attention scores
-            # only for the new sequence. Thus, the matrix of scores is of size
-            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
-            # j > cache_len + i, since row i corresponds to token cache_len + i.
-            mask = torch.hstack(
-                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
-            ).type_as(h)
-
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
+        return h
+
+
+class Transformer(TransformerCore):
+    def __init__(self, params: ModelArgs):
+        super().__init__(params)
+        self.output = ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
+
+    def forward(self, tokens: torch.Tensor):
+        h = super(tokens, 0)
         return self.output(h).float()
 
-        """
-        batch_size, seq_len, _ = h.shape
-        outputs = torch.zeros(
-            (batch_size, seq_len, self.vocab_size), dtype=h.dtype, device=h.device
-        )
 
-        for clridx in range(2):
-            clr_h = h[:, clridx::2]
-            for i, head in enumerate(self.heads):
-                clr_hd = head_idxs[clridx] == i
-                if clr_hd.sum() > 0:
-                    outputs[clr_hd, clridx::2] = head(clr_h[clr_hd]).float()
-        
-        return outputs
-        """
+class MimicChessHead(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.core = TransformerCore(params)
+        for param in self.core.parameters():
+            param.requires_grad = False
+        self.head = ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
+
+    def forward(self, tokens: torch.Tensor):
+        h = self.core(tokens, 0)
+        return self.head(h).float()

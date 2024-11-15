@@ -1,6 +1,5 @@
 #datadir: pgn/test_npy
 datadir: datasets/lichess_300_1200_0924/split_30_11_900505
-dataset_p: 0.1
 elo_edges: [1200,1400,1600,1800,2000,2200,2400,2600]
 model_args:
   dim: 512 
