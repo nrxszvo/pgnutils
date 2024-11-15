@@ -67,6 +67,11 @@ def main():
         tag = f"{hi}" if hi != float("inf") else f"gt-{lo}"
         outdir = os.path.join(args.outdir, tag)
         os.makedirs(outdir, exist_ok=True)
+        os.symlink(os.path.join(args.npydir, "md.npy"), os.path.join(outdir, "md.npy"))
+        os.symlink(
+            os.path.join(args.npydir, "mvids.npy"),
+            os.path.join(outdir, "mvids.npy"),
+        )
         for name, data in [("train", train), ("val", val), ("test", test)]:
             elo_data = split_elo(data, elos, lo, hi)
             if len(elo_data) > 0:
@@ -80,8 +85,9 @@ def main():
                 mmap.flush()
                 with open(os.path.join(outdir, "fmd.json"), "w") as f:
                     json.dump({"dtype": "int64", "shape": elo_data.shape}, f)
+
             else:
-                with open(os.path.join(outdir, f"{name}.txt"), "w") as f:
+                with open(os.path.join(outdir, "empty.txt"), "w") as f:
                     f.write("empty\n")
 
 
