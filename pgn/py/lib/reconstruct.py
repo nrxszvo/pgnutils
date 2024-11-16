@@ -60,9 +60,6 @@ def reconstruct(mvids):
     game = chess.pgn.Game()
     node = game
     for mvid in mvids:
-        try:
-            uci = mvid_to_uci(mvid, white, black)
-            node = node.add_variation(chess.Move.from_uci(uci))
-        except Exception as e:
-            print(e)
+        uci = mvid_to_uci(mvid, white, black)
+        node = node.add_variation(chess.Move.from_uci(uci))
     return str(game.mainline())

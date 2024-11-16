@@ -3,7 +3,7 @@ from pathlib import Path
 import os
 import sys
 import numpy as np
-from pgn.py.lib import reconstruct
+from pgn.py.lib.reconstruct import reconstruct
 
 import torch
 from fairscale.nn.model_parallel.initialize import (
@@ -12,8 +12,8 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 from config import get_config
+from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
 from mmcdataset import MMCDataModule, NOOP
-from mmc import MimicChessModule
 from model import ModelArgs
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -60,34 +60,47 @@ def main():
     ckpt_path = checkpoints[get_model_parallel_rank()]
 
     model_args = ModelArgs(cfgyml.model_args)
-    model_args.n_output_heads = len(cfgyml.elo_edges) + 1
 
     dm = MMCDataModule(
         cfgyml.datadir,
-        cfgyml.elo_edges,
         model_args.max_seq_len,
         cfgyml.batch_size,
         os.cpu_count() - 1,
     )
-    mmc = MimicChessModule.load_from_checkpoint(
-        ckpt_path,
-        name=args.outfn,
-        outdir="outputs/models",
-        model_args=model_args,
-        min_moves=dm.min_moves,
-        NOOP=NOOP,
-        lr_scheduler_params=cfgyml.lr_scheduler_params,
+    module_args = MMCModuleArgs(
+        "test",
+        os.path.join("outputs", "core"),
+        model_args,
+        dm.min_moves,
+        NOOP,
+        cfgyml.lr_scheduler_params,
+        cfgyml.max_steps,
+        cfgyml.val_check_steps,
+        cfgyml.random_seed,
+        cfgyml.strategy,
+        1,
     )
+
+    mmc = MimicChessCoreModule.load_from_checkpoint(ckpt_path, params=module_args)
     outputs = mmc.predict(dm)
     ntotalpred = 0
     ntotalmatch = 0
-    for tokens, tgt in outputs:
+    nfail = 0
+    ngm = 0
+    for tokens, probs, tgt in outputs:
         matches = (tokens == tgt).sum(dim=-1, keepdim=True)
         matches[tgt == NOOP] = 0
         npred = (tgt != NOOP).sum()
         ntotalpred += npred
         ntotalmatch += matches.sum()
+        ngm += tokens.shape[0]
+        for gm in tokens:
+            try:
+                reconstruct(gm[:, 0].cpu().numpy())
+            except Exception as e:
+                nfail += 1
 
+    print(f"{ngm-nfail} out of {ngm} are legal games")
     print(f"Top 3 accuracy: {100*ntotalmatch/ntotalpred:.2f}%")
 
 

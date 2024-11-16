@@ -35,6 +35,12 @@ if [ ! -d "/home/ubuntu/git/mimicChess" ]; then
 	if [ ! -e "datasets" ]; then
 		ln -s ~/mimicChessData/datasets .
 	fi
+	if [ -z ${MYNAME+x} ]; then
+		echo "git name and email not specified; skipping git config"
+	else
+		git config --global user.name ${MYNAME} 
+		git config --global user.email ${MYEMAIL} 
+	fi
 	git remote set-url origin https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git
 	cd /home/ubuntu
 fi
@@ -66,9 +72,4 @@ fi
 
 echo "set -g mouse on" > ~/.tmux.conf
 
-if [ -z ${MYNAME+x} ]; then
-	echo "git name and email not specified; skipping git config"
-else
-	git config --global user.name ${MYNAME} 
-	git config --global user.email ${MYEMAIL} 
-fi
+

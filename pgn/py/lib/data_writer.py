@@ -1,7 +1,7 @@
 import os
 import numpy as np
 
-from py.lib import timeit
+from . import timeit
 
 
 class DataWriter:

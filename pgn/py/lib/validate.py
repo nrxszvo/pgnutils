@@ -39,7 +39,7 @@ PIECE_TO_NAME = [
 INT_TO_FILE = ["a", "b", "c", "d", "e", "f", "g", "h"]
 
 
-def int_to_row(r):
+def int_to_rank(r):
     return f"{r+1}"
 
 
@@ -53,7 +53,7 @@ def decode_mvid(mvid):
         sqr = mvid % 64
         r = sqr // 8
         f = sqr % 8
-        mv = f"{INT_TO_FILE[f]}{int_to_row(r)}"
+        mv = f"{INT_TO_FILE[f]}{int_to_rank(r)}"
         return f"{piece}{mv}"
 
 

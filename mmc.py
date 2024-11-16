@@ -201,7 +201,7 @@ class MimicChessCoreModule(L.LightningModule):
         self.trainer.fit(self, datamodule=datamodule)
         print(torch.cuda.memory_summary())
 
-    def predict(self, datamodule, p, n):
+    def predict(self, datamodule):
         tkargs = self.trainer_kwargs
         trainer = L.Trainer(callbacks=[TQDMProgressBar()], **tkargs)
         outputs = trainer.predict(self, datamodule)
