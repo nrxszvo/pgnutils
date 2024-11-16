@@ -20,7 +20,7 @@ fi
 
 conda update -y conda
 conda install -c anaconda -y python=${PY_VER}
-conda install -y "numpy<2.0" matplotlib pyyaml pytorch torchvision torchaudio pytorch-cuda=12.4 lightning tensorboard -c pytorch -c nvidia
+conda install -y "numpy<2.0" matplotlib pyyaml pytorch torchvision torchaudio pytorch-cuda=12.4 lightning tensorboard chess -c pytorch -c nvidia -c conda-forge
 pip install fairscale
 
 
