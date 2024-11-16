@@ -15,8 +15,8 @@ ABSL_FLAG(std::string, npydir, "", "directory containing npy raw data files");
 ABSL_FLAG(int, minMoves, 11, "minimum number of game moves to be included in filtered dataset");
 ABSL_FLAG(int, minTime, 30, "minimum time remaining to be included in filtered dataset");
 ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
-ABSL_FLAG(float, trainp, 0.8, "percentage of dataset for training");
-ABSL_FLAG(float, testp, 0.1, "percentage of dataset for testing");
+ABSL_FLAG(float, trainp, 0.9, "percentage of dataset for training");
+ABSL_FLAG(float, testp, 0.08, "percentage of dataset for testing");
 
 MMCRawDataReader::MMCRawDataReader(std::string npydir) {
 	gamestarts = std::ifstream(npydir + "/gamestarts.npy", std::ios::binary);

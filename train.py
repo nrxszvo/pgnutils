@@ -84,7 +84,7 @@ def main():
 
     model_args = ModelArgs(cfgyml.model_args)
 
-    def train_model(datadir, savepath):
+    def train_model(name, datadir, savepath):
         dm = MMCDataModule(
             datadir,
             model_args.max_seq_len,
@@ -92,7 +92,7 @@ def main():
             os.cpu_count() - 1,
         )
         module_args = MMCModuleArgs(
-            args.outfn,
+            name,
             os.path.join(savepath, "ckpt"),
             model_args,
             dm.min_moves,
@@ -120,10 +120,14 @@ def main():
     datadir = cfgyml.datadir
     if args.train_heads:
         for elo in os.listdir(datadir):
-            print(f"training head {elo}")
-            train_model(os.path.join(datadir, elo), os.path.join(save_path, elo))
+            if not os.path.exists(os.path.join(save_path, elo)):
+                print(f"training head {elo}")
+                name = f"{args.outfn}-{elo}"
+                train_model(
+                    name, os.path.join(datadir, elo), os.path.join(save_path, elo)
+                )
     else:
-        train_model(datadir, save_path)
+        train_model(f"{args.outfn}-core", datadir, save_path)
 
 
 if __name__ == "__main__":
