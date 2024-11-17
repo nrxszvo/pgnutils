@@ -60,8 +60,7 @@ class MimicChessCoreModule(L.LightningModule):
             TQDMProgressBar(),
             ModelCheckpoint(
                 dirpath=params.outdir,
-                filename=params.name,
-                save_weights_only=True,
+                filename=params.name + "-{val_loss:.2f}",
                 every_n_train_steps=val_check_interval,
             ),
         ]
