@@ -15,6 +15,7 @@ def init_worker(seed):
 def collate_fn(batch):
     maxinp = 0
     maxtgt = 0
+    openmoves = batch[0]["opening"].shape[0]
     for d in batch:
         inp = d["input"]
         tgt = d["target"]
@@ -24,6 +25,7 @@ def collate_fn(batch):
     bs = len(batch)
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
+    openings = torch.empty((bs, openmoves), dtype=torch.int64)
 
     for i, d in enumerate(batch):
         inp = d["input"]
@@ -32,8 +34,9 @@ def collate_fn(batch):
         nt = tgt.shape[0]
         inputs[i, :ni] = torch.from_numpy(inp)
         targets[i, :nt] = torch.from_numpy(tgt)
+        openings[i] = torch.from_numpy(d["opening"])
 
-    return {"input": inputs, "target": targets}
+    return {"input": inputs, "target": targets, "opening": openings}
 
 
 class MMCDataset(Dataset):
@@ -55,8 +58,10 @@ class MMCDataset(Dataset):
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
 
-        tgt = np.empty(n_inp - self.min_moves, dtype="int64")
-        tgt[:] = self.mvids[gs + self.min_moves + 1 : gs + n_inp + 1]
+        opening = self.mvids[gs : gs + self.min_moves]
+
+        tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
+        tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
 
         if self.train_head:
             if code == 0:
@@ -67,6 +72,7 @@ class MMCDataset(Dataset):
         return {
             "input": inp,
             "target": tgt,
+            "opening": opening,
         }
 
 
@@ -161,6 +167,7 @@ class MMCDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             worker_init_fn=init_worker,
+            persistent_workers=True,
         )
 
     def val_dataloader(self):
@@ -169,6 +176,7 @@ class MMCDataModule(L.LightningDataModule):
             collate_fn=collate_fn,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
+            persistent_workers=True,
         )
 
     def predict_dataloader(self):
@@ -177,6 +185,7 @@ class MMCDataModule(L.LightningDataModule):
             collate_fn=collate_fn,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
+            persistent_workers=True,
         )
 
     def test_dataloader(self):

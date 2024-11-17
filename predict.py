@@ -3,18 +3,17 @@ from pathlib import Path
 import os
 import sys
 import numpy as np
-from pgn.py.lib.reconstruct import reconstruct
+from pgn.py.lib.reconstruct import count_invalid
 
 import torch
 from fairscale.nn.model_parallel.initialize import (
     get_model_parallel_rank,
-    initialize_model_parallel,
-    model_parallel_is_initialized,
 )
 from config import get_config
 from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
 from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
+from train import torch_init
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
@@ -27,7 +26,6 @@ parser.add_argument(
 
 
 def main():
-    torch.set_float32_matmul_precision("high")
     args = parser.parse_args()
     cpfn = args.cp
     cfgfn = args.cfg
@@ -37,20 +35,9 @@ def main():
 
     cfgyml = get_config(cfgfn)
 
-    if not torch.distributed.is_initialized():
-        torch.distributed.init_process_group("nccl")
-
-    if not model_parallel_is_initialized():
-        model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
-        initialize_model_parallel(model_parallel_size)
-
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    torch.cuda.set_device(local_rank)
+    model_parallel_size = torch_init()
 
     torch.manual_seed(cfgyml.random_seed)
-
-    if local_rank > 0:
-        sys.stdout = open(os.devnull, "w")
 
     checkpoints = sorted(Path(args.cp).glob("*.ckpt"))
     assert len(checkpoints) > 0, f"no checkpoint files found in {args.cp}"
@@ -85,22 +72,25 @@ def main():
     outputs = mmc.predict(dm)
     ntotalpred = 0
     ntotalmatch = 0
-    nfail = 0
+    npass = 0
     ngm = 0
-    for tokens, probs, tgt in outputs:
+    nvalidmoves = 0
+    for tokens, probs, opening, tgt in outputs:
         matches = (tokens == tgt).sum(dim=-1, keepdim=True)
         matches[tgt == NOOP] = 0
         npred = (tgt != NOOP).sum()
         ntotalpred += npred
         ntotalmatch += matches.sum()
         ngm += tokens.shape[0]
-        for gm in tokens:
-            try:
-                reconstruct(gm[:, 0].cpu().numpy())
-            except Exception as e:
-                nfail += 1
+        for game in zip(tokens, opening, tgt):
+            pred, opn, tgt = game
+            nmoves, nfail = count_invalid(pred[:, 0], opn, tgt[:, 0])
+            nvalidmoves += nmoves - nfail
+            if nfail == 0:
+                npass += 1
 
-    print(f"{ngm-nfail} out of {ngm} are legal games")
+    print(f"{npass}/{ngm} are legal games")
+    print(f"Average number of legal moves per game: {nvalidmoves/ngm:.1f}")
     print(f"Top 3 accuracy: {100*ntotalmatch/ntotalpred:.2f}%")
 
 

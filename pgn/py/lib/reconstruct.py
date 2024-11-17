@@ -21,19 +21,20 @@ def decode_mvid(mvid):
         return [(pid, r, f)]
 
 
-def mvid_to_uci(mvid, white, black):
-    updates = decode_mvid(mvid)
-    pid, dr, df = updates[0]
+def update_to_uci(update, white, black, update_state=True):
+    pid, dr, df = update
+
     if pid < 16:
-        sr = white[pid].rank
-        sf = white[pid].file
-        white[pid].rank = dr
-        white[pid].file = df
+        state = white
     else:
-        sr = black[pid - 16].rank
-        sf = black[pid - 16].file
-        black[pid - 16].rank = dr
-        black[pid - 16].file = df
+        pid -= 16
+        state = black
+
+    sr = state[pid].rank
+    sf = state[pid].file
+    if update_state:
+        state[pid].rank = dr
+        state[pid].file = df
 
     sr = val.int_to_rank(sr)
     dr = val.int_to_rank(dr)
@@ -43,23 +44,66 @@ def mvid_to_uci(mvid, white, black):
     src = f"{sf}{sr}"
     dst = f"{df}{dr}"
 
-    if len(updates) == 2:
-        pid, dr, df = updates[1]
-        if pid < 16:
-            white[pid].rank = dr
-            white[pid].file = df
-        else:
-            black[pid - 16].rank = dr
-            black[pid - 16].file = df
-
     return f"{src}{dst}"
+
+
+def mvid_to_uci(mvid, white, black, update_state=True):
+    updates = decode_mvid(mvid)
+    uci = update_to_uci(updates[0], white, black, update_state)
+    if len(updates) == 2:
+        update_to_uci(updates[1], white, black, update_state)
+    return uci
+
+
+def count_invalid(mvids, opening, tgts):
+    _, white, black = inf.board_state()
+    game = chess.pgn.Game()
+    node = game
+    nfail = 0
+    for mvid in opening:
+        uci = mvid_to_uci(mvid, white, black)
+        node = node.add_variation(chess.Move.from_uci(uci))
+
+    nmoves = len(mvids)
+    for i, (mvid, tgt) in enumerate(zip(mvids, tgts)):
+        if tgt == inf.NOOP:
+            nmoves = i
+            break
+        try:
+            uci = mvid_to_uci(mvid, white, black, False)
+            if not game.board().is_legal(chess.Move.from_uci(uci)):
+                nfail += 1
+        except chess.InvalidMoveError:
+            nfail += 1
+
+        uci = mvid_to_uci(tgt, white, black)
+        node = node.add_variation(chess.Move.from_uci(uci))
+
+    return nmoves, nfail
 
 
 def reconstruct(mvids):
     _, white, black = inf.board_state()
     game = chess.pgn.Game()
     node = game
-    for mvid in mvids:
-        uci = mvid_to_uci(mvid, white, black)
-        node = node.add_variation(chess.Move.from_uci(uci))
-    return str(game.mainline())
+    uci_str = []
+    success = True
+    err = None
+    nvalid = len(mvids)
+    try:
+        for i, mvid in enumerate(mvids):
+            uci = mvid_to_uci(mvid, white, black)
+            uci_str.append(uci)
+            node = node.add_variation(chess.Move.from_uci(uci))
+    except Exception as e:
+        success = False
+        err = str(e)
+        nvalid = i
+
+    return {
+        "success": success,
+        "err": err,
+        "uci": " ".join(uci_str),
+        "pgn": str(game.mainline()),
+        "nvalidmoves": nvalid,
+    }

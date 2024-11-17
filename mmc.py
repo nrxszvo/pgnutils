@@ -47,6 +47,11 @@ class MimicChessCoreModule(L.LightningModule):
         logger = TensorBoardLogger(".", name="L", version=params.name)
         val_check_interval = min(params.val_check_steps, params.max_steps)
         self.lr_scheduler_params = params.lr_scheduler_params
+        if torch.cuda.is_available():
+            precision = "bf16-mixed" if torch.cuda.is_bf16_supported() else 16
+        else:
+            precision = 32
+
         self.trainer_kwargs = {
             "logger": logger,
             "max_steps": params.max_steps,
@@ -54,13 +59,14 @@ class MimicChessCoreModule(L.LightningModule):
             "check_val_every_n_epoch": None,
             "strategy": params.strategy,
             "devices": params.devices,
-            "precision": "bf16-mixed" if torch.cuda.is_bf16_supported() else 16,
+            "precision": precision,
+            "accelerator": "gpu" if torch.cuda.is_available() else "cpu",
         }
         self.callbacks = [
             TQDMProgressBar(),
             ModelCheckpoint(
                 dirpath=params.outdir,
-                filename=params.name + "-{val_loss:.2f}",
+                filename=params.name + "-{train_loss:.2f}",
                 every_n_train_steps=val_check_interval,
             ),
         ]
@@ -151,7 +157,7 @@ class MimicChessCoreModule(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        logits = logits[:, self.min_moves :].permute(0, 2, 1)
+        logits = logits[:, self.min_moves - 1 :].permute(0, 2, 1)
         tgt = batch["target"]
         loss = self.loss(logits, tgt, ignore_index=self.NOOP)
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
@@ -161,7 +167,7 @@ class MimicChessCoreModule(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        logits = logits[:, self.min_moves :].permute(0, 2, 1)
+        logits = logits[:, self.min_moves - 1 :].permute(0, 2, 1)
         tgt = batch["target"]
         valid_loss = self.loss(logits, tgt, ignore_index=self.NOOP)
 
@@ -192,13 +198,14 @@ class MimicChessCoreModule(L.LightningModule):
     def predict_step(self, batch, batch_idx):
         logits = self(batch["input"])
         tgt = batch["target"]
-        probs = torch.softmax(logits[:, self.min_moves :], dim=-1)
+        probs = torch.softmax(logits[:, self.min_moves - 1 :], dim=-1)
         tokens, probs = self.sample_top_n(probs, n=3)
-        return tokens, probs, tgt.unsqueeze(-1)
+        return tokens, probs, batch["opening"], tgt.unsqueeze(-1)
 
     def fit(self, datamodule):
         self.trainer.fit(self, datamodule=datamodule)
-        print(torch.cuda.memory_summary())
+        if torch.cuda.is_available():
+            print(torch.cuda.memory_summary())
 
     def predict(self, datamodule):
         tkargs = self.trainer_kwargs

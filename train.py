@@ -41,7 +41,8 @@ parser.add_argument("--elo", default=None, help="elo tag for elo-specific head o
 
 
 def torch_init():
-    model_parallel_size = 1
+    model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.set_float32_matmul_precision("medium")
     if not torch.distributed.is_initialized():
         if torch.cuda.is_available():
@@ -50,15 +51,14 @@ def torch_init():
             torch.distributed.init_process_group("gloo")
 
     if not model_parallel_is_initialized():
-        model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
         initialize_model_parallel(model_parallel_size)
 
     if torch.cuda.is_available():
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
         torch.cuda.set_device(local_rank)
         if local_rank > 0:
             sys.stdout = open(os.devnull, "w")
     return model_parallel_size
+
 
 def main():
     args = parser.parse_args()
