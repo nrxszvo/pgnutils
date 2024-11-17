@@ -28,9 +28,6 @@ parser.add_argument(
     help="prediction file name",
 )
 parser.add_argument(
-    "--ngpu", default=1, type=int, help="number of gpus per training trial"
-)
-parser.add_argument(
     "--train_heads",
     action="store_true",
     help="Train the head for a specific elo range using an existing MMC core checkpoint",
@@ -61,7 +58,7 @@ def torch_init():
         torch.cuda.set_device(local_rank)
         if local_rank > 0:
             sys.stdout = open(os.devnull, "w")
-
+    return model_parallel_size
 
 def main():
     args = parser.parse_args()
@@ -78,7 +75,7 @@ def main():
 
     shutil.copyfile(args.cfg, os.path.join(save_path, args.cfg))
 
-    torch_init()
+    devices = torch_init()
 
     torch.manual_seed(cfgyml.random_seed)
 
@@ -102,7 +99,7 @@ def main():
             cfgyml.val_check_steps,
             cfgyml.random_seed,
             cfgyml.strategy,
-            args.ngpu,
+            devices,
         )
 
         if args.train_heads:
