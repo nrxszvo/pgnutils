@@ -1,8 +1,6 @@
 import argparse
 from pathlib import Path
 import os
-import sys
-import numpy as np
 from pgn.py.lib.reconstruct import count_invalid
 
 import torch
@@ -75,7 +73,9 @@ def main():
     npass = 0
     ngm = 0
     nvalidmoves = 0
-    for tokens, probs, opening, tgt in outputs:
+    nbatch = len(outputs)
+    for i, (tokens, probs, opening, tgt) in enumerate(outputs):
+        print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
         matches = (tokens == tgt).sum(dim=-1, keepdim=True)
         matches[tgt == NOOP] = 0
         npred = (tgt != NOOP).sum()
@@ -88,7 +88,7 @@ def main():
             nvalidmoves += nmoves - nfail
             if nfail == 0:
                 npass += 1
-
+    print()
     print(f"{npass}/{ngm} are legal games")
     print(f"Average number of legal moves per game: {nvalidmoves/ngm:.1f}")
     print(f"Top 3 accuracy: {100*ntotalmatch/ntotalpred:.2f}%")

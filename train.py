@@ -108,9 +108,9 @@ def main():
             mmc = MimicChessCoreModule(module_args)
 
         nweights, nflpweights = mmc.num_params()
-        est_flops = 6 * nflpweights * cfgyml.batch_size * model_args.max_seq_len
+        est_tflops = 6 * nflpweights * cfgyml.batch_size * model_args.max_seq_len / 1e12
         print(f"# model params: {nweights:.2e}")
-        print(f"estimated FLOPs: {est_flops:.2e}")
+        print(f"estimated TFLOPs: {est_tflops:.1f}")
 
         mmc.fit(dm)
 
