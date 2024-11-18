@@ -29,7 +29,7 @@ fi
 
 if [ ! -d "${HOME}/git/mimicChess" ]; then
 	cd git
-	git clone https://${GHTOKEN}@github.com/nrxszvo/mimicChess.git
+	git clone "https://${GHTOKEN}@github.com/nrxszvo/mimicChess.git"
 	cd mimicChess
 	if [ ! -e "datasets" ]; then
 		ln -s ${HOME}/mimicChessData/datasets .
@@ -40,6 +40,7 @@ if [ ! -d "${HOME}/git/mimicChess" ]; then
 		git config --global user.name ${MYNAME} 
 		git config --global user.email ${MYEMAIL} 
 	fi
+	git remote set-url origin "https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git"
 	cd ${HOME} 
 fi
 
@@ -74,5 +75,3 @@ fi
 
 echo "set -g mouse on" > ${HOME}/.tmux.conf
 
-cd ${HOME}/git/mimicChess
-git remote set-url origin https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git
