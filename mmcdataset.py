@@ -58,7 +58,8 @@ class MMCDataset(Dataset):
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
 
-        opening = self.mvids[gs : gs + self.min_moves]
+        opening = np.empty(self.min_moves, dtype="int64")
+        opening[:] = self.mvids[gs : gs + self.min_moves]
 
         tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
         tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
