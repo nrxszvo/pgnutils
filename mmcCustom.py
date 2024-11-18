@@ -49,10 +49,11 @@ def test(params: MMCModuleArgs, dm: MMCDataModule):
     optimizer = optim.Adam(ddp_model.parameters(), lr=lr)
     optimizer.zero_grad()
 
+    dm.setup(stage="fit")
     for batch in dm.train_dataloader():
         logits = ddp_model(batch["input"])
         logits = logits[:, params.min_moves - 1 :].permute(0, 2, 1)
-        tgt = batch["target"]
+        tgt = batch["target"].to(device_id)
         loss_fn(logits, tgt, ignore_index=params.NOOP).backward()
         optimizer.step()
         break

@@ -3,10 +3,10 @@ channels:
   - pytorch
   - nvidia
 dependencies:
-  - python=3.10
-  - "numpy<2.0"
-  - matplotlib
-  - pyyaml
+  - anaconda::python=3.10
+  - anaconda::"numpy<2.0"
+  - anacond::matplotlib
+  - anaconda::pyyaml
   - conda-forge::chess
   - pytorch
   - torchvision
@@ -14,7 +14,7 @@ dependencies:
   - pytorch-cuda=12.4
   - conda-forge::lightning
   - conda-forge::tensorboard
-  - pip
+  - anaconda::pip
   - pip:
       - fairscale
 
