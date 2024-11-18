@@ -16,10 +16,10 @@ parser.add_argument("myemail", help="for git config, e.g. johndoe@email.com")
 args = parser.parse_args()
 
 myname = f'\\"{args.myname}\\"'
-myemail = f'"{args.myemail}"'
+myemail = f'\\"{args.myemail}\\"'
 
 with open(args.tokenfile) as f:
-    token = f'"{f.readline()}"'
+    token = f'\\"{f.readline().rstrip()}\\"'
 
 scpcmd = f"scp provision.sh {args.remote}:~"
 sshcmd = f'ssh {args.remote} "chmod 755 provision.sh; GHTOKEN={token} MYNAME={myname} MYEMAIL={myemail} sh provision.sh"'
