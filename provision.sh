@@ -15,14 +15,14 @@ fi
 if ! command -v conda 2>&1 >/dev/null
 then
 	export PATH=/home/ubuntu/miniconda/bin:${PATH}
-	conda init
 fi
 
 conda update -y conda
-conda install -c anaconda -y python=${PY_VER}
-conda install -y "numpy<2.0" matplotlib pyyaml pytorch torchvision torchaudio pytorch-cuda=12.4 lightning tensorboard chess -c pytorch -c nvidia -c conda-forge
+conda install -y python=${PY_VER} "numpy<2.0" matplotlib pyyaml conda-forge::chess
+conda install -y pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
+conda install -y lightning tensorboard -c conda-forge
 pip install fairscale
-
+conda init
 
 if [ ! -d "/home/ubuntu/git" ]; then
 	mkdir "/home/ubuntu/git"
