@@ -14,6 +14,7 @@ from fairscale.nn.model_parallel.initialize import (
 from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
 from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
+import mmcCustom
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", default="cfg.yml", help="yaml config file")
@@ -112,7 +113,8 @@ def main():
         print(f"# model params: {nweights:.2e}")
         print(f"estimated TFLOPs: {est_tflops:.1f}")
 
-        mmc.fit(dm)
+        # mmc.fit(dm)
+        mmcCustom.test(module_args, dm)
 
     datadir = cfgyml.datadir
     if args.train_heads:
