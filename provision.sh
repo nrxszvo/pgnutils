@@ -4,6 +4,8 @@ CONDA_DIR=${HOME}/miniconda
 PY_VER=3.10
 cd ${HOME} 
 
+echo "github token is ${GHTOKEN}"
+
 if [ ! -d "${CONDA_DIR}" ]; then
 	echo "removing local python site-packages..."
 	rm -rf ${HOME}/.local/lib/python3.10/site-packages
