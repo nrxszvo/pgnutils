@@ -44,7 +44,7 @@ if [ ! -d "${HOME}/git/mimicChess" ]; then
 fi
 
 cd git/mimicChess
-conda env update -f environment.yml
+conda env update --file=environment.yml
 cd ${HOME}
 
 if ! command -v npm 2>&1 >/dev/null

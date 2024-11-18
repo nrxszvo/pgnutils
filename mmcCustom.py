@@ -35,8 +35,6 @@ class MMCModuleArgs:
 
 
 def test(params: MMCModuleArgs, dm: MMCDataModule):
-    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-    dist.init_process_group("nccl")
     rank = dist.get_rank()
 
     print(f"Start running basic DDP example on rank {rank}.")
