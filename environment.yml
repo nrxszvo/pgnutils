@@ -1,0 +1,16 @@
+name: mimicChess
+dependencies:
+  - python=3.10
+  - "numpy<2.0"
+  - matplotlib
+  - pyyaml
+  - conda-forge::chess
+  - pytorch::pytorch
+  - pytorch::torchvision
+  - pytorch::torchaudio
+  - nvidia::pytorch-cuda=12.4
+  - conda-forge::lightning
+  - conda-forge::tensorboard
+  - pip:
+      - fairscale
+

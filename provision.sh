@@ -18,10 +18,7 @@ then
 fi
 
 conda update -y conda
-conda install -y python=${PY_VER} "numpy<2.0" matplotlib pyyaml conda-forge::chess
-conda install -y pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
-conda install -y lightning tensorboard -c conda-forge
-pip install fairscale
+conda env create -f environment.yml
 conda init
 
 if [ ! -d "/home/ubuntu/git" ]; then
@@ -41,7 +38,6 @@ if [ ! -d "/home/ubuntu/git/mimicChess" ]; then
 		git config --global user.name ${MYNAME} 
 		git config --global user.email ${MYEMAIL} 
 	fi
-	git remote set-url origin https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git
 	cd /home/ubuntu
 fi
 
@@ -72,4 +68,5 @@ fi
 
 echo "set -g mouse on" > ~/.tmux.conf
 
-
+cd ~/git/mimicChess
+git remote set-url origin https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git
