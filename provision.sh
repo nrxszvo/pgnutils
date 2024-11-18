@@ -18,7 +18,6 @@ then
 fi
 
 conda update -y conda
-conda env create -f environment.yml
 conda init
 
 if [ ! -d "/home/ubuntu/git" ]; then
@@ -40,6 +39,10 @@ if [ ! -d "/home/ubuntu/git/mimicChess" ]; then
 	fi
 	cd /home/ubuntu
 fi
+
+cd git/mimicChess
+conda env create -f environment.yml
+cd ~
 
 if ! command -v npm 2>&1 >/dev/null
 then

@@ -8,9 +8,10 @@ dependencies:
   - pytorch::pytorch
   - pytorch::torchvision
   - pytorch::torchaudio
-  - nvidia::pytorch-cuda=12.4
+  - pytorch::pytorch-cuda=12.4
   - conda-forge::lightning
   - conda-forge::tensorboard
+  - pip
   - pip:
       - fairscale
 
