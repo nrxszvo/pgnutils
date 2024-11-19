@@ -47,16 +47,17 @@ def test(params: MMCModuleArgs, dm: MMCDataModule):
 
     lr = params.lr_scheduler_params["lr"]
     optimizer = optim.Adam(ddp_model.parameters(), lr=lr)
-    optimizer.zero_grad()
 
     dm.setup(stage="fit")
     for batch in dm.train_dataloader():
         logits = ddp_model(batch["input"])
         logits = logits[:, params.min_moves - 1 :].permute(0, 2, 1)
         tgt = batch["target"].to(device_id)
-        loss_fn(logits, tgt, ignore_index=params.NOOP).backward()
+        loss = loss_fn(logits, tgt, ignore_index=params.NOOP)
+        print(f"Loss: {loss.item():.2f}", end="\r")
+        optimizer.zero_grad()
+        loss.backward()
         optimizer.step()
-        break
 
     dist.destroy_process_group()
     print(f"Finished running basic DDP example on rank {rank}.")

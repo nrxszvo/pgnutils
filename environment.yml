@@ -4,8 +4,8 @@ channels:
   - nvidia
 dependencies:
   - anaconda::python=3.10
-  - anaconda::"numpy<2.0"
-  - anacond::matplotlib
+  - anaconda::numpy=1.26
+  - conda-forge::matplotlib
   - anaconda::pyyaml
   - conda-forge::chess
   - pytorch

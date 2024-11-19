@@ -87,7 +87,7 @@ def main():
             datadir,
             model_args.max_seq_len,
             cfgyml.batch_size,
-            os.cpu_count() - 1,
+            os.cpu_count()//devices,
         )
         module_args = MMCModuleArgs(
             name,
