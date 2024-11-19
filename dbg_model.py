@@ -12,19 +12,22 @@ from torch import nn
 
 @dataclass
 class ModelArgs:
-    dim: int = 128
+    dim: int = 4096
     n_output_heads: int = 12
-    n_layers: int = 8
+    n_layers: int = 32
     n_heads: int = 32
-    n_kv_heads: int = 8
+    n_kv_heads: Optional[int] = None
     vocab_size: int = 2048
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
-    ffn_dim_multiplier: float = 1.5
+    ffn_dim_multiplier: Optional[float] = None
     norm_eps: float = 1e-5
-    rope_theta: float = 10000
+    rope_theta: float = 500000
 
-    max_batch_size: int = 256
-    max_seq_len: int = 128
+    max_batch_size: int = 32
+    max_seq_len: int = 512
+
+    def __init__(self, paramd):
+        self.__dict__ = paramd
 
 
 class RMSNorm(torch.nn.Module):
@@ -37,7 +40,6 @@ class RMSNorm(torch.nn.Module):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
     def forward(self, x):
-        return x
         output = self._norm(x.float()).type_as(x)
         return output * self.weight
 
@@ -87,8 +89,9 @@ class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
-        self.n_local_heads = args.n_heads
-        self.n_local_kv_heads = self.n_kv_heads
+        model_parallel_size = 1
+        self.n_local_heads = args.n_heads // model_parallel_size
+        self.n_local_kv_heads = self.n_kv_heads // model_parallel_size
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
 
@@ -220,15 +223,15 @@ class Transformer(nn.Module):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
             params.max_seq_len * 2,
             params.rope_theta,
         )
+        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
-    def forward(self, tokens: torch.Tensor, start_pos: int, heads: torch.Tensor):
+    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
@@ -237,9 +240,11 @@ class Transformer(nn.Module):
         mask = None
         if seqlen > 1:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+
             mask = torch.triu(mask, diagonal=1)
 
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        return self.output(h).float()
+        output = self.output(h).float()
+        return output

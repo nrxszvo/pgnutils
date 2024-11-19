@@ -1,7 +1,7 @@
 datadir: datasets/lichess_300_1200_0924/split_30_11_900208
 model_args:
   dim: 2048 
-  n_layers: 16 
+  n_layers: 32 
   n_heads: 32
   n_kv_heads: 8 
   vocab_size: 2048
@@ -16,7 +16,7 @@ lr_scheduler_params:
   name: "WarmUpCosine"
   min_lr: 3.e-6
   warmup_steps: 8000
-batch_size: 256
+batch_size: 32 
 max_steps: 1.e+6 
 val_check_steps: 50000
 strategy: fsdp 

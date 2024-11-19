@@ -79,6 +79,7 @@ def main():
     # devices = torch_init()
     devices = int(os.environ.get("WORLD_SIZE"))
 
+    torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
 
     model_args = ModelArgs(cfgyml.model_args)
