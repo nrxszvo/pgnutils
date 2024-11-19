@@ -4,11 +4,9 @@ CONDA_DIR=${HOME}/miniconda
 PY_VER=3.10
 cd ${HOME} 
 
-echo "github token is ${GHTOKEN}"
-
 if [ ! -d "${CONDA_DIR}" ]; then
 	echo "removing local python site-packages..."
-	rm -rf ${HOME}/.local/lib/python3.10/site-packages
+	rm -rf ${HOME}/.local/lib/python${PY_VER}/site-packages
 	echo "installing conda..."
 	curl -LO "http://repo.continuum.io/miniconda/Miniconda3-${CONDA_VER}-Linux-${OS_TYPE}.sh"
 	bash Miniconda3-${CONDA_VER}-Linux-${OS_TYPE}.sh -p ${HOME}/miniconda -b
@@ -40,7 +38,7 @@ if [ ! -d "${HOME}/git/mimicChess" ]; then
 		git config --global user.name ${MYNAME} 
 		git config --global user.email ${MYEMAIL} 
 	fi
-	git remote set-url origin "https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git"
+	#git remote set-url origin "https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git"
 	cd ${HOME} 
 fi
 

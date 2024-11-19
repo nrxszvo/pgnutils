@@ -11,7 +11,9 @@ from fairscale.nn.model_parallel.initialize import (
     initialize_model_parallel,
     model_parallel_is_initialized,
 )
-from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
+
+# from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
+from mmcCustom import MimicChessCoreModule, MMCModuleArgs
 from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
 import mmcCustom
@@ -87,7 +89,7 @@ def main():
             datadir,
             model_args.max_seq_len,
             cfgyml.batch_size,
-            os.cpu_count()//devices,
+            os.cpu_count() // devices,
         )
         module_args = MMCModuleArgs(
             name,
@@ -104,7 +106,8 @@ def main():
         )
 
         if args.train_heads:
-            mmc = MimicChessHeadModule(module_args, args.core_ckpt)
+            # mmc = MimicChessHeadModule(module_args, args.core_ckpt)
+            pass
         else:
             mmc = MimicChessCoreModule(module_args)
 
@@ -113,8 +116,7 @@ def main():
         print(f"# model params: {nweights:.2e}")
         print(f"estimated TFLOPs: {est_tflops:.1f}")
 
-        # mmc.fit(dm)
-        mmcCustom.test(module_args, dm)
+        mmc.fit(dm)
 
     datadir = cfgyml.datadir
     if args.train_heads:
