@@ -214,19 +214,12 @@ class Transformer(nn.Module):
         self.n_layers = params.n_layers
 
         self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
-        self.head_embeddings = nn.Embedding(params.n_output_heads, params.dim)
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        # self.heads = nn.ModuleList(
-        #    [
-        #        nn.Linear(params.dim, params.vocab_size, bias=False)
-        #        for _ in range(params.n_output_heads)
-        #    ]
-        # )
         self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
@@ -244,37 +237,9 @@ class Transformer(nn.Module):
         mask = None
         if seqlen > 1:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-
             mask = torch.triu(mask, diagonal=1)
-
-            # When performing key-value caching, we compute the attention scores
-            # only for the new sequence. Thus, the matrix of scores is of size
-            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
-            # j > cache_len + i, since row i corresponds to token cache_len + i.
-            mask = torch.hstack(
-                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
-            ).type_as(h)
 
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        head_emb = self.head_embeddings(heads).unsqueeze(1)
-        h += head_emb
         return self.output(h).float()
-
-        """
-        batch_size, seq_len, _ = h.shape
-        outputs = torch.zeros(
-            (batch_size, seq_len, self.vocab_size), dtype=h.dtype, device=h.device
-        )
-
-        for clridx in range(2):
-            clr_h = h[:, clridx::2]
-            for i, head in enumerate(self.heads):
-                clr_hd = head_idxs[clridx] == i
-                if clr_hd.sum() > 0:
-                    # outputs[clr_hd, clridx::2] = head(clr_h[clr_hd]).float()
-                    outputs += head(h).float()
-        
-        return outputs
-        """

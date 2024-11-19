@@ -14,7 +14,7 @@ from torch.optim.lr_scheduler import (
     StepLR,
 )
 
-from model import ModelArgs, Transformer
+from dbg_model import ModelArgs, Transformer
 
 
 @dataclass

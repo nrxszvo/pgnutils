@@ -12,11 +12,9 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
-# from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
-from mmcCustom import MimicChessCoreModule, MMCModuleArgs
+from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
 from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
-import mmcCustom
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", default="cfg.yml", help="yaml config file")
@@ -46,7 +44,7 @@ parser.add_argument("--elo", default=None, help="elo tag for elo-specific head o
 def torch_init():
     model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    torch.set_float32_matmul_precision("medium")
+    torch.set_float32_matmul_precision("high")
     if not torch.distributed.is_initialized():
         if torch.cuda.is_available():
             torch.distributed.init_process_group("nccl")
@@ -78,7 +76,8 @@ def main():
 
     shutil.copyfile(args.cfg, os.path.join(save_path, args.cfg))
 
-    devices = torch_init()
+    # devices = torch_init()
+    devices = int(os.environ.get("WORLD_SIZE"))
 
     torch.manual_seed(cfgyml.random_seed)
 
@@ -106,8 +105,7 @@ def main():
         )
 
         if args.train_heads:
-            # mmc = MimicChessHeadModule(module_args, args.core_ckpt)
-            pass
+            mmc = MimicChessHeadModule(module_args, args.core_ckpt)
         else:
             mmc = MimicChessCoreModule(module_args)
 
