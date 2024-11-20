@@ -8,7 +8,7 @@ from fairscale.nn.model_parallel.initialize import (
     get_model_parallel_rank,
 )
 from config import get_config
-from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
+from mmc import MimicChessCoreModule, MMCModuleArgs
 from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
 from train import torch_init
@@ -68,30 +68,34 @@ def main():
 
     mmc = MimicChessCoreModule.load_from_checkpoint(ckpt_path, params=module_args)
     outputs = mmc.predict(dm)
-    ntotalpred = 0
-    ntotalmatch = 0
     npass = 0
     ngm = 0
-    nvalidmoves = 0
+    nvalid = 0
+    ntotal = 0
     nbatch = len(outputs)
+    top_n_stats = [{"n": 3, "pred": 0, "match": 0}, {"n": 5, "pred": 0, "match": 0}]
     for i, (tokens, probs, opening, tgt) in enumerate(outputs):
         print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-        matches = (tokens == tgt).sum(dim=-1, keepdim=True)
-        matches[tgt == NOOP] = 0
-        npred = (tgt != NOOP).sum()
-        ntotalpred += npred
-        ntotalmatch += matches.sum()
+        for s in top_n_stats:
+            matches = (tokens[:, :, : s["n"]] == tgt).sum(dim=-1, keepdim=True)
+            matches[tgt == NOOP] = 0
+            npred = (tgt != NOOP).sum()
+            s["pred"] += npred
+            s["match"] += matches.sum()
+
         ngm += tokens.shape[0]
         for game in zip(tokens, opening, tgt):
             pred, opn, tgt = game
             nmoves, nfail = count_invalid(pred[:, 0], opn, tgt[:, 0])
-            nvalidmoves += nmoves - nfail
+            nvalid += nmoves - nfail
+            ntotal += nmoves
             if nfail == 0:
                 npass += 1
     print()
-    print(f"{npass}/{ngm} are legal games")
-    print(f"Average number of legal moves per game: {nvalidmoves/ngm:.1f}")
-    print(f"Top 3 accuracy: {100*ntotalmatch/ntotalpred:.2f}%")
+    print(f"Legal game frequency: {100*npass/ngm:.1f}%")
+    print(f"Legal move frequency: {100*nvalid/ntotal:.1f}%")
+    for s in top_n_stats:
+        print(f"Top {s['n']} accuracy: {100*s['match']/s['pred']:.2f}%")
 
 
 if __name__ == "__main__":

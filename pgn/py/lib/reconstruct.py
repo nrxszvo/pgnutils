@@ -71,7 +71,7 @@ def count_invalid(mvids, opening, tgts):
             break
         try:
             uci = mvid_to_uci(mvid, white, black, False)
-            if not game.board().is_legal(chess.Move.from_uci(uci)):
+            if not node.board().is_legal(chess.Move.from_uci(uci)):
                 nfail += 1
         except chess.InvalidMoveError:
             nfail += 1

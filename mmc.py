@@ -199,7 +199,7 @@ class MimicChessCoreModule(L.LightningModule):
         logits = self(batch["input"])
         tgt = batch["target"]
         probs = torch.softmax(logits[:, self.min_moves - 1 :], dim=-1)
-        tokens, probs = self.sample_top_n(probs, n=3)
+        probs, tokens = torch.sort(probs, dim=-1, descending=True)
         return tokens, probs, batch["opening"], tgt.unsqueeze(-1)
 
     def fit(self, datamodule, ckpt=None):
