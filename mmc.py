@@ -202,8 +202,8 @@ class MimicChessCoreModule(L.LightningModule):
         tokens, probs = self.sample_top_n(probs, n=3)
         return tokens, probs, batch["opening"], tgt.unsqueeze(-1)
 
-    def fit(self, datamodule):
-        self.trainer.fit(self, datamodule=datamodule)
+    def fit(self, datamodule, ckpt=None):
+        self.trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt)
         if torch.cuda.is_available():
             print(torch.cuda.memory_summary())
 
