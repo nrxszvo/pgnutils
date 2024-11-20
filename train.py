@@ -115,7 +115,7 @@ def main():
         print(f"# model params: {nweights:.2e}")
         print(f"estimated TFLOPs: {est_tflops:.1f}")
 
-        mmc.fit(dm)
+        mmc.fit(dm, ckpt=args.core_ckpt)
 
     datadir = cfgyml.datadir
     if args.train_heads:
