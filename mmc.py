@@ -225,12 +225,13 @@ class MimicChessCoreModule(L.LightningModule):
 
 class MimicChessHeadModule(MimicChessCoreModule):
     def __init__(self, params: MMCModuleArgs, core_ckpt: str):
+        self.params = params
         self.core_ckpt = core_ckpt
         super().__init__(params)
 
     def _init_model(self):
         super()._init_model()
-        exclude_layer = f'model.layers.{params.n_layers-1}'
+        exclude_layer = f"model.layers.{self.params.n_layers-1}"
         for name, param in self.model.named_parameters():
             if "output" not in name and exclude_layer not in name:
                 param.requires_grad = False
