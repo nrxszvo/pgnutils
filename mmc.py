@@ -35,6 +35,7 @@ class MMCModuleArgs:
 class MimicChessCoreModule(L.LightningModule):
     def __init__(self, params: MMCModuleArgs):
         super().__init__()
+        self.save_hyperparameters()
         self.params = params
         L.seed_everything(params.random_seed, workers=True)
         self.model = None
@@ -44,7 +45,10 @@ class MimicChessCoreModule(L.LightningModule):
         self.val_check_steps = params.val_check_steps
         self.max_steps = params.max_steps
         self.loss = F.cross_entropy
-        logger = TensorBoardLogger(".", name="L", version=params.name)
+        if params.name:
+            logger = TensorBoardLogger(".", name="L", version=params.name)
+        else:
+            logger = None
         val_check_interval = min(params.val_check_steps, params.max_steps)
         self.lr_scheduler_params = params.lr_scheduler_params
         if torch.cuda.is_available():

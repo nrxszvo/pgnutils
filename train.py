@@ -24,9 +24,9 @@ parser.add_argument(
     help="folder for saving config and checkpoints",
 )
 parser.add_argument(
-    "--outfn",
+    "--name",
     default=datetime.now().strftime("%Y%m%d%H%M%S"),
-    help="prediction file name",
+    help="experiment name for log files and checkpoints",
 )
 parser.add_argument(
     "--train_heads",
@@ -34,22 +34,15 @@ parser.add_argument(
     help="Train the head for a specific elo range using an existing MMC core checkpoint",
 )
 parser.add_argument(
-    "--core_ckpt",
+    "--ckpt",
     default=None,
-    help="core MMC checkpoint to use when training a head output",
+    help="MMC checkpoint from which to resume training",
 )
-parser.add_argument(
-    "--resume_ckpt",
-    default=None,
-    help="checkpoint from which to resume training",
-)
-parser.add_argument("--elo", default=None, help="elo tag for elo-specific head output")
 
 
-def torch_init():
+def torch_dist_init():
     model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    torch.set_float32_matmul_precision("high")
     if not torch.distributed.is_initialized():
         if torch.cuda.is_available():
             torch.distributed.init_process_group("nccl")
@@ -63,7 +56,6 @@ def torch_init():
         torch.cuda.set_device(local_rank)
         if local_rank > 0:
             sys.stdout = open(os.devnull, "w")
-    return model_parallel_size
 
 
 def main():
@@ -71,18 +63,21 @@ def main():
     cfgyml = get_config(args.cfg)
 
     if args.train_heads:
-        save_path = os.path.join(args.save_path, "heads", args.outfn)
+        save_path = os.path.join(args.save_path, "heads", args.name)
         os.makedirs(save_path, exist_ok=True)
         with open(os.path.join(save_path, "core_ckpt.txt"), "w") as f:
             f.write(args.core_ckpt)
     else:
-        save_path = os.path.join(args.save_path, "core", args.outfn)
+        save_path = os.path.join(args.save_path, "core", args.name)
         os.makedirs(save_path, exist_ok=True)
 
     shutil.copyfile(args.cfg, os.path.join(save_path, args.cfg))
 
-    # devices = torch_init()
+    # torch_dist_init()
     devices = int(os.environ.get("WORLD_SIZE"))
+
+    n_workers = os.cpu_count() // devices
+    os.environ["OMP_NUM_THREADS"] = str(n_workers)
 
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
@@ -94,7 +89,7 @@ def main():
             datadir,
             model_args.max_seq_len,
             cfgyml.batch_size,
-            os.cpu_count() // devices,
+            n_workers,
         )
         module_args = MMCModuleArgs(
             name,
@@ -127,7 +122,7 @@ def main():
         for elo in ["2000"]:  # os.listdir(datadir):
             if not os.path.exists(os.path.join(save_path, elo)):
                 print(f"training head {elo}")
-                name = f"{args.outfn}-{elo}"
+                name = f"{args.name}-{elo}"
                 train_model(
                     name, os.path.join(datadir, elo), os.path.join(save_path, elo)
                 )
