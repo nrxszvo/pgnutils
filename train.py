@@ -124,7 +124,7 @@ def main():
 
     datadir = cfgyml.datadir
     if args.train_heads:
-        for elo in os.listdir(datadir):
+        for elo in ["2000"]:  # os.listdir(datadir):
             if not os.path.exists(os.path.join(save_path, elo)):
                 print(f"training head {elo}")
                 name = f"{args.outfn}-{elo}"
