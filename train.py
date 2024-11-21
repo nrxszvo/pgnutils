@@ -38,6 +38,11 @@ parser.add_argument(
     default=None,
     help="core MMC checkpoint to use when training a head output",
 )
+parser.add_argument(
+    "--resume_ckpt",
+    default=None,
+    help="checkpoint from which to resume training",
+)
 parser.add_argument("--elo", default=None, help="elo tag for elo-specific head output")
 
 
@@ -115,7 +120,7 @@ def main():
         print(f"# model params: {nweights:.2e}")
         print(f"estimated TFLOPs: {est_tflops:.1f}")
 
-        mmc.fit(dm, ckpt=args.core_ckpt)
+        mmc.fit(dm, ckpt=args.resume_ckpt)
 
     datadir = cfgyml.datadir
     if args.train_heads:

@@ -231,13 +231,13 @@ class MimicChessHeadModule(MimicChessCoreModule):
 
     def _init_model(self):
         super()._init_model()
-        exclude_layer = f"model.layers.{self.params.n_layers-1}"
+        exclude_layer = f"layers.{self.params.model_args.n_layers-1}"
         for name, param in self.model.named_parameters():
-            if "output" not in name and exclude_layer not in name:
+            if (
+                name not in ["output.weight", "norm.weight"]
+                and exclude_layer not in name
+            ):
                 param.requires_grad = False
 
         ckpt = torch.load(self.core_ckpt, map_location="cpu", weights_only=True)
-        updated = {}
-        for k, v in ckpt["state_dict"].items():
-            updated[k.replace("model.", "")] = v
-        self.model.load_state_dict(updated, strict=True)
+        self.load_state_dict(ckpt["state_dict"], strict=True)
