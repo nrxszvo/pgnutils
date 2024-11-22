@@ -74,7 +74,7 @@ def main():
     shutil.copyfile(args.cfg, os.path.join(save_path, args.cfg))
 
     # torch_dist_init()
-    devices = int(os.environ.get("WORLD_SIZE"))
+    devices = int(os.environ.get("WORLD_SIZE", 1))
 
     n_workers = os.cpu_count() // devices
     os.environ["OMP_NUM_THREADS"] = str(n_workers)
@@ -115,7 +115,7 @@ def main():
         print(f"# model params: {nweights:.2e}")
         print(f"estimated TFLOPs: {est_tflops:.1f}")
 
-        mmc.fit(dm, ckpt=args.resume_ckpt)
+        mmc.fit(dm, ckpt=args.ckpt)
 
     datadir = cfgyml.datadir
     if args.train_heads:
@@ -127,7 +127,7 @@ def main():
                     name, os.path.join(datadir, elo), os.path.join(save_path, elo)
                 )
     else:
-        train_model(f"{args.outfn}-core", datadir, save_path)
+        train_model(f"{args.name}-core", datadir, save_path)
 
 
 if __name__ == "__main__":

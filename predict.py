@@ -39,7 +39,7 @@ def main():
         "prediction",
         os.path.join("outputs", "dummy"),
         model_args,
-        fmd["min_moves"],
+        fmd["min_moves"] - 1,
         NOOP,
         cfgyml.lr_scheduler_params,
         cfgyml.max_steps,
