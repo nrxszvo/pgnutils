@@ -51,15 +51,14 @@ def main():
     mmc = MimicChessCoreModule.load_from_checkpoint(args.cp, params=module_args)
     outputs = {}
     for dataname, pth in datadirs.items():
-        if dataname in ["core"]:
-            print(f"Predicting {dataname}")
-            dm = MMCDataModule(
-                pth,
-                model_args.max_seq_len,
-                cfgyml.batch_size,
-                n_workers,
-            )
-            outputs[dataname] = mmc.predict(dm)
+        print(f"Predicting {dataname}")
+        dm = MMCDataModule(
+            pth,
+            model_args.max_seq_len,
+            cfgyml.batch_size,
+            n_workers,
+        )
+        outputs[dataname] = mmc.predict(dm)
 
     def evaluate(outputs):
         npass = 0
@@ -92,9 +91,8 @@ def main():
             print(f"Top {s['n']} accuracy: {100*s['match']/s['pred']:.2f}%")
 
     for name, data in outputs.items():
-        if name in ["core", "2000"]:
-            print(f"Evaluating {name}")
-            evaluate(data)
+        print(f"Evaluating {name}")
+        evaluate(data)
 
 
 if __name__ == "__main__":
