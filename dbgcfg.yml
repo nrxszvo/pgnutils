@@ -4,6 +4,7 @@ model_args:
   n_layers: 16 
   n_heads: 32
   n_kv_heads: 8 
+  n_elo_heads: 10
   vocab_size: 2048
   multiple_of: 256
   ffn_dim_multiplier: 1.5 

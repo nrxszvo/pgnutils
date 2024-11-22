@@ -159,11 +159,25 @@ class MimicChessCoreModule(L.LightningModule):
     def forward(self, tokens):
         return self.model(tokens)
 
+    def _separate_logits(self, logits, batch):
+        _, _, seqlen, dim = logits.shape
+        logits = logits.permute(0, 1, 3, 2).reshape(-1, dim, seqlen)
+        logits = logits[:, :, self.min_moves - 1 :]
+        wlogits = torch.index_select(logits, 0, batch["heads"][:, 0])
+        blogits = torch.index_select(logits, 0, batch["heads"][:, 1])
+        wtgt = batch["w_target"]
+        btgt = batch["b_target"]
+        return wlogits, blogits, wtgt, btgt
+
+    def _get_loss(self, logits, batch):
+        wlogits, blogits, wtgt, btgt = self._separate_logits(logits, batch)
+        wloss = self.loss(wlogits, wtgt, ignore_index=self.NOOP)
+        bloss = self.loss(blogits, btgt, ignore_index=self.NOOP)
+        return (wloss + bloss) / 2
+
     def training_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        logits = logits[:, self.min_moves - 1 :].permute(0, 2, 1)
-        tgt = batch["target"]
-        loss = self.loss(logits, tgt, ignore_index=self.NOOP)
+        loss = self._get_loss(logits, batch)
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
         self.log("lr", cur_lr, prog_bar=True, sync_dist=True)
@@ -171,9 +185,7 @@ class MimicChessCoreModule(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        logits = logits[:, self.min_moves - 1 :].permute(0, 2, 1)
-        tgt = batch["target"]
-        valid_loss = self.loss(logits, tgt, ignore_index=self.NOOP)
+        valid_loss = self._get_loss(logits, batch)
 
         if torch.isnan(valid_loss):
             raise Exception("Loss is NaN, training stopped.")
@@ -201,9 +213,14 @@ class MimicChessCoreModule(L.LightningModule):
 
     def predict_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        tgt = batch["target"]
-        probs = torch.softmax(logits[:, self.min_moves - 1 :], dim=-1)
+        wlogits, blogits, tgt, btgt = self._separate_logits(logits, batch)
+        probs = torch.softmax(wlogits, dim=-1)
         probs, tokens = torch.sort(probs, dim=-1, descending=True)
+        bprobs = torch.softmax(blogits, dim=-1)
+        bprobs, btokens = torch.sort(bprobs, dim=-1, descending=True)
+        probs[1::2] = bprobs[1::2]
+        tokens[1::2] = btokens[1::2]
+        tgt[1::2] = btgt[1::2]
         return tokens, probs, batch["opening"], tgt.unsqueeze(-1)
 
     def fit(self, datamodule, ckpt=None):

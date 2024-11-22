@@ -54,6 +54,7 @@ def main():
         print(f"Predicting {dataname}")
         dm = MMCDataModule(
             pth,
+            cfgyml.elo_edges,
             model_args.max_seq_len,
             cfgyml.batch_size,
             n_workers,

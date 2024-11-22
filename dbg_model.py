@@ -86,18 +86,31 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 
 class Attention(nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelArgs, is_elo_head: bool = False):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
         model_parallel_size = 1
         self.n_local_heads = args.n_heads // model_parallel_size
         self.n_local_kv_heads = self.n_kv_heads // model_parallel_size
-        self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
+
+        self.n_rep = self.n_local_heads // self.n_local_kv_heads
+        self.out_dim = args.dim
+        n_total_heads = args.n_heads
+        self.n_orig_local_heads = self.n_local_heads
+        self.batch_mul = 1
+
+        if is_elo_head:
+            self.batch_mul = args.n_elo_heads
+            n_total_heads *= args.n_elo_heads
+            self.n_local_heads *= args.n_elo_heads
+            self.n_kv_heads *= args.n_elo_heads
+            self.n_local_kv_heads *= args.n_elo_heads
+            self.out_dim *= args.n_elo_heads
 
         self.wq = nn.Linear(
             args.dim,
-            args.n_heads * self.head_dim,
+            n_total_heads * self.head_dim,
             bias=False,
         )
         self.wk = nn.Linear(
@@ -153,7 +166,15 @@ class Attention(nn.Module):
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
-        output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        output = (
+            output.view(bsz, self.n_orig_local_heads, self.batch_mul, seqlen, -1)
+            .transpose(1, 2)
+            .contiguous()
+            .view(bsz * self.batch_mul, self.n_orig_local_heads, seqlen, -1)
+        )
+        output = (
+            output.transpose(1, 2).contiguous().view(bsz * self.batch_mul, seqlen, -1)
+        )
         return self.wo(output)
 
 
@@ -181,12 +202,13 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, layer_id: int, args: ModelArgs):
+    def __init__(self, layer_id: int, args: ModelArgs, is_elo_head: bool = False):
         super().__init__()
-        self.n_heads = args.n_heads
-        self.dim = args.dim
-        self.head_dim = args.dim // args.n_heads
-        self.attention = Attention(args)
+        self.is_elo_head = is_elo_head
+        if is_elo_head:
+            self.n_elo_heads = args.n_elo_heads
+
+        self.attention = Attention(args, is_elo_head)
         self.feed_forward = FeedForward(
             dim=args.dim,
             hidden_dim=4 * args.dim,
@@ -204,7 +226,18 @@ class TransformerBlock(nn.Module):
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
     ):
-        h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
+        if self.is_elo_head:
+            bs, slen, dim = x.shape
+            n_rep = self.n_elo_heads
+            res = (
+                x[None, :, :, :]
+                .expand(n_rep, bs, slen, dim)
+                .reshape(bs * n_rep, slen, dim)
+            )
+        else:
+            res = x
+
+        h = res + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -220,16 +253,20 @@ class Transformer(nn.Module):
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
-            self.layers.append(TransformerBlock(layer_id, params))
+            self.layers.append(
+                TransformerBlock(
+                    layer_id, params, is_elo_head=layer_id == params.n_layers - 1
+                )
+            )
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
             params.max_seq_len * 2,
             params.rope_theta,
         )
-        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
     def forward(self, tokens: torch.Tensor, start_pos: int = 0):
         _bsz, seqlen = tokens.shape

@@ -18,42 +18,64 @@ def collate_fn(batch):
     openmoves = batch[0]["opening"].shape[0]
     for d in batch:
         inp = d["input"]
-        tgt = d["target"]
+        tgt = d["w_target"]
         maxinp = max(maxinp, inp.shape[0])
         maxtgt = max(maxtgt, tgt.shape[0])
 
     bs = len(batch)
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
-    targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
+    wtargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
+    btargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
+    heads = torch.empty((bs, 2), dtype=torch.int32)
 
     for i, d in enumerate(batch):
         inp = d["input"]
-        tgt = d["target"]
+        wtgt = d["w_target"]
+        btgt = d["b_target"]
         ni = inp.shape[0]
-        nt = tgt.shape[0]
+        nt = wtgt.shape[0]
         inputs[i, :ni] = torch.from_numpy(inp)
-        targets[i, :nt] = torch.from_numpy(tgt)
+        wtargets[i, :nt] = torch.from_numpy(wtgt)
+        btargets[i, :nt] = torch.from_numpy(btgt)
         openings[i] = torch.from_numpy(d["opening"])
+        heads[i, 0] = i * batch[0]["nhead"] + d["w_head"]
+        heads[i, 1] = i * batch[0]["nhead"] + d["b_head"]
 
-    return {"input": inputs, "target": targets, "opening": openings}
+    return {
+        "input": inputs,
+        "w_target": wtargets,
+        "b_target": btargets,
+        "opening": openings,
+        "heads": heads,
+    }
 
 
 class MMCDataset(Dataset):
-    def __init__(self, seq_len, min_moves, indices, mvids, train_head=False):
+    def __init__(
+        self, seq_len, min_moves, indices, mvids, elos, elo_edges, train_head=False
+    ):
         super().__init__()
         self.seq_len = seq_len
         self.min_moves = min_moves
         self.nsamp = len(indices)
         self.indices = indices
         self.mvids = mvids
+        self.elos = elos
+        self.elo_edges = elo_edges
         self.train_head = train_head
 
     def __len__(self):
         return self.nsamp
 
+    def _get_head(self, elo):
+        for i, edge in enumerate(self.elo_edges):
+            if elo <= edge:
+                return i
+
     def __getitem__(self, idx):
-        gs, nmoves, code = self.indices[idx]
+        gs, nmoves, gidx = self.indices[idx]
+        welo, belo = self.elos[gidx]
         n_inp = min(self.seq_len, nmoves - 1)
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
@@ -61,19 +83,24 @@ class MMCDataset(Dataset):
         opening = np.empty(self.min_moves, dtype="int64")
         opening[:] = self.mvids[gs : gs + self.min_moves]
 
-        tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
-        tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
+        w_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
+        b_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
+        w_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
+        b_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
+        w_tgt[1::2] = NOOP
+        b_tgt[::2] = NOOP
 
-        if self.train_head:
-            if code == 0:
-                tgt[1::2] = NOOP
-            elif code == 1:
-                tgt[::2] = NOOP
+        w_head = self._get_head(welo)
+        b_head = self._get_head(belo)
 
         return {
             "input": inp,
-            "target": tgt,
+            "w_target": w_tgt,
+            "b_target": b_tgt,
             "opening": opening,
+            "w_head": w_head,
+            "b_head": b_head,
+            "nhead": len(self.elo_edges),
         }
 
 
@@ -93,6 +120,12 @@ def load_data(dirname):
             mode="r",
             dtype="int16",
             shape=md["nmoves"],
+        ),
+        "elos": np.memmap(
+            os.path.join(dirname, "elo.npy"),
+            mode="r",
+            dtype="int16",
+            shape=(fmd["ngames"], 2),
         ),
         "train": np.memmap(
             os.path.join(dirname, "train.npy"),
@@ -119,6 +152,7 @@ class MMCDataModule(L.LightningDataModule):
     def __init__(
         self,
         datadir,
+        elo_edges,
         max_seq_len,
         batch_size,
         num_workers,
@@ -138,12 +172,16 @@ class MMCDataModule(L.LightningDataModule):
                 self.fmd["min_moves"],
                 self.train,
                 self.mvids,
+                self.elos,
+                self.elo_edges,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.fmd["min_moves"],
                 self.val,
                 self.mvids,
+                self.elos,
+                self.elo_edges,
             )
         if stage == "validate":
             self.valset = MMCDataset(
@@ -151,6 +189,8 @@ class MMCDataModule(L.LightningDataModule):
                 self.fmd["min_moves"],
                 self.val,
                 self.mvids,
+                self.elos,
+                self.elo_edges,
             )
 
         if stage in ["test", "predict"]:
@@ -159,6 +199,8 @@ class MMCDataModule(L.LightningDataModule):
                 self.fmd["min_moves"],
                 self.test,
                 self.mvids,
+                self.elos,
+                self.elo_edges,
             )
 
     def train_dataloader(self):

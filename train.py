@@ -87,6 +87,7 @@ def main():
     def train_model(name, datadir, savepath):
         dm = MMCDataModule(
             datadir,
+            cfgyml.elo_edges,
             model_args.max_seq_len,
             cfgyml.batch_size,
             n_workers,
@@ -105,10 +106,7 @@ def main():
             devices,
         )
 
-        if args.train_heads:
-            mmc = MimicChessHeadModule(module_args, args.core_ckpt)
-        else:
-            mmc = MimicChessCoreModule(module_args)
+        mmc = MimicChessCoreModule(module_args)
 
         nweights, nflpweights = mmc.num_params()
         est_tflops = 6 * nflpweights * cfgyml.batch_size * model_args.max_seq_len / 1e12
@@ -118,16 +116,7 @@ def main():
         mmc.fit(dm, ckpt=args.ckpt)
 
     datadir = cfgyml.datadir
-    if args.train_heads:
-        for elo in ["2000"]:  # os.listdir(datadir):
-            if not os.path.exists(os.path.join(save_path, elo)):
-                print(f"training head {elo}")
-                name = f"{args.name}-{elo}"
-                train_model(
-                    name, os.path.join(datadir, elo), os.path.join(save_path, elo)
-                )
-    else:
-        train_model(f"{args.name}-core", datadir, save_path)
+    train_model(args.name, datadir, save_path)
 
 
 if __name__ == "__main__":
