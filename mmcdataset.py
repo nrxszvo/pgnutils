@@ -161,7 +161,9 @@ class MMCDataModule(L.LightningDataModule):
         self.max_seq_len = max_seq_len
         self.batch_size = batch_size
         self.num_workers = num_workers
-
+        self.elo_edges = elo_edges
+        if self.elo_edges[-1] < float("inf"):
+            self.elo_edges.append(float("inf"))
         self.__dict__.update(load_data(datadir))
         self.min_moves = self.fmd["min_moves"]
 
