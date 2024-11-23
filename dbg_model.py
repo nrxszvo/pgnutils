@@ -13,7 +13,7 @@ from torch import nn
 @dataclass
 class ModelArgs:
     dim: int = 4096
-    n_output_heads: int = 12
+    n_elo_heads: int = 1
     n_layers: int = 32
     n_heads: int = 32
     n_kv_heads: Optional[int] = None

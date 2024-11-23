@@ -140,7 +140,7 @@ class MimicChessCoreModule(L.LightningModule):
             )
             min_lr = self.lr_scheduler_params["min_lr"]
             cosineLR = CosineAnnealingLR(
-                optimizer=optimizer, T_max=self.max_steps, eta_min=min_lr
+                optimizer=optimizer, T_max=self.max_steps - warmup_steps, eta_min=min_lr
             )
             scheduler = SequentialLR(
                 optimizer=optimizer,
@@ -160,8 +160,8 @@ class MimicChessCoreModule(L.LightningModule):
         return self.model(tokens)
 
     def _separate_logits(self, logits, batch):
-        _, _, seqlen, dim = logits.shape
-        logits = logits.permute(0, 1, 3, 2).reshape(-1, dim, seqlen)
+        _, seqlen, dim = logits.shape
+        logits = logits.permute(0, 2, 1)
         logits = logits[:, :, self.min_moves - 1 :]
         wlogits = torch.index_select(logits, 0, batch["heads"][:, 0])
         blogits = torch.index_select(logits, 0, batch["heads"][:, 1])
