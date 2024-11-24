@@ -159,10 +159,13 @@ class MimicChessCoreModule(L.LightningModule):
     def forward(self, tokens):
         return self.model(tokens)
 
-    def _separate_logits(self, logits, batch):
-        _, seqlen, dim = logits.shape
+    def _chomp_logits(self, logits):
         logits = logits.permute(0, 2, 1)
         logits = logits[:, :, self.min_moves - 1 :]
+        return logits
+
+    def _separate_logits(self, logits, batch):
+        logits = self._chomp_logits(logits)
         wlogits = torch.index_select(logits, 0, batch["heads"][:, 0])
         blogits = torch.index_select(logits, 0, batch["heads"][:, 1])
         wtgt = batch["w_target"]
@@ -213,15 +216,12 @@ class MimicChessCoreModule(L.LightningModule):
 
     def predict_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        wlogits, blogits, tgt, btgt = self._separate_logits(logits, batch)
-        probs = torch.softmax(wlogits, dim=-1)
-        probs, tokens = torch.sort(probs, dim=-1, descending=True)
-        bprobs = torch.softmax(blogits, dim=-1)
-        bprobs, btokens = torch.sort(bprobs, dim=-1, descending=True)
-        probs[1::2] = bprobs[1::2]
-        tokens[1::2] = btokens[1::2]
-        tgt[1::2] = btgt[1::2]
-        return tokens, probs, batch["opening"], tgt.unsqueeze(-1)
+        logits = self._chomp_logits(logits)
+        probs = torch.softmax(logits, dim=-2)
+        probs, tokens = torch.sort(probs, dim=-2, descending=True)
+        tgt = batch["w_target"]
+        tgt[:, 1::2] = batch["b_target"][:, 1::2]
+        return tokens, probs, batch["heads"], batch["opening"], tgt.unsqueeze(-1)
 
     def fit(self, datamodule, ckpt=None):
         self.trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt)

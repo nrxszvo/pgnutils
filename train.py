@@ -1,5 +1,7 @@
 import argparse
 import os
+n_workers = os.cpu_count() // devices
+os.environ["OMP_NUM_THREADS"] = str(n_workers)
 import shutil
 import sys
 from datetime import datetime
@@ -75,9 +77,6 @@ def main():
 
     # torch_dist_init()
     devices = int(os.environ.get("WORLD_SIZE", 1))
-
-    n_workers = os.cpu_count() // devices
-    os.environ["OMP_NUM_THREADS"] = str(n_workers)
 
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
