@@ -1,8 +1,6 @@
 import argparse
 import os
 
-n_workers = os.cpu_count() - 1
-os.environ["OMP_NUM_THREADS"] = str(n_workers)
 import json
 from pgn.py.lib.reconstruct import count_invalid
 
@@ -23,10 +21,12 @@ def main():
     cfgfn = args.cfg
     cfgyml = get_config(cfgfn)
 
+    n_workers = os.cpu_count() - 1
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
 
     model_args = ModelArgs(cfgyml.model_args)
+    model_args.n_elo_heads = len(cfgyml.elo_edges) + 1
 
     datadirs = {"core": cfgyml.datadir}
     for elo in os.listdir(os.path.join(cfgyml.datadir, "elos")):
@@ -61,29 +61,60 @@ def main():
         )
         outputs[dataname] = mmc.predict(dm)
 
+    def select_heads(data, heads):
+        hdata = torch.index_select(data, 0, heads[:, 0])
+        bhdata = torch.index_select(data, 0, heads[:, 1])
+        hdata[:, :, 1::2] = bhdata[:, :, 1::2]
+        return hdata
+
     def evaluate(outputs):
         npass = 0
         ngm = 0
         nvalid = 0
         ntotal = 0
         nbatch = len(outputs)
-        top_n_stats = [{"n": 3, "pred": 0, "match": 0}, {"n": 5, "pred": 0, "match": 0}]
-        for i, (tokens, probs, heads, opening, tgt) in enumerate(outputs):
+        top_n_stats = [
+            {"n": 3, "move_match": 0},
+            {"n": 5, "move_match": 0},
+        ]
+        ht_matches = 0
+        aht_matches = 0
+        ntotalpred = 0
+        for i, (tokens, probs, heads, opening, tgts) in enumerate(outputs):
             print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-            for s in top_n_stats:
-                head_tokens = torch.index_select(tokens, 0, heads[:, 0])
-                btokens = torch.index_select(tokens, 0, heads[:, 1])
-                head_tokens[:, :, 1::2] = btokens[:, :, 1::2]
-                matches = (head_tokens[:, : s["n"]] == tgt).sum(dim=-1, keepdim=True)
-                matches[tgt == NOOP] = 0
-                npred = (tgt != NOOP).sum()
-                s["pred"] += npred
-                s["match"] += matches.sum()
+            _, _, seqlen = probs.shape
+            max_heads = (
+                probs[:, 0].reshape(-1, model_args.n_elo_heads, seqlen).max(dim=1)[1]
+            )
+            head_matches = max_heads == heads[:, 0:1]
+            head_matches[:, 1::2] = max_heads[:, 1::2] == heads[:, 1:2]
+            head_matches[tgts[:, 0] == NOOP] = 0
+            ht_matches += head_matches.sum()
 
-            ngm += tokens.shape[0]
-            for game in zip(head_tokens, opening, tgt):
+            adj_matches = (max_heads == heads[:, 0:1] - 1) | (
+                max_heads == heads[:, 0:1] + 1
+            )
+            adj_matches[:, 1::2] = (max_heads[:, 1::2] == heads[:, 1:2] - 1) | (
+                max_heads[:, 1::2] == heads[:, 1:2] + 1
+            )
+            adj_matches[tgts[:, 0] == NOOP] = 0
+            aht_matches += adj_matches.sum()
+
+            npred = (tgts != NOOP).sum()
+            ntotalpred += npred
+
+            for s in top_n_stats:
+                head_tokens = select_heads(tokens, heads)
+                move_matches = (head_tokens[:, : s["n"]] == tgts).sum(
+                    dim=1, keepdim=True
+                )
+                move_matches[tgts == NOOP] = 0
+                s["move_match"] += move_matches.sum()
+
+            ngm += head_tokens.shape[0]
+            for game in zip(head_tokens, opening, tgts):
                 pred, opn, tgt = game
-                nmoves, nfail = count_invalid(pred[:, 0], opn, tgt[:, 0])
+                nmoves, nfail = count_invalid(pred[0], opn, tgt[0])
                 nvalid += nmoves - nfail
                 ntotal += nmoves
                 if nfail == 0:
@@ -91,8 +122,10 @@ def main():
         print()
         print(f"Legal game frequency: {100*npass/ngm:.1f}%")
         print(f"Legal move frequency: {100*nvalid/ntotal:.1f}%")
+        print(f"Head accuracy: {100*ht_matches/npred:.2f}%")
+        print(f"Adjacent Head accuracy: {100*aht_matches/npred:.2f}%")
         for s in top_n_stats:
-            print(f"Top {s['n']} accuracy: {100*s['match']/s['pred']:.2f}%")
+            print(f"Top {s['n']} accuracy: {100*s['move_match']/npred:.2f}%")
 
     for name, data in outputs.items():
         print(f"Evaluating {name}")

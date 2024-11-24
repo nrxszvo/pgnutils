@@ -212,7 +212,7 @@ class MMCDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             worker_init_fn=init_worker,
-            persistent_workers=True,
+            persistent_workers=self.num_workers > 0,
         )
 
     def val_dataloader(self):
@@ -221,7 +221,7 @@ class MMCDataModule(L.LightningDataModule):
             collate_fn=collate_fn,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            persistent_workers=True,
+            persistent_workers=self.num_workers > 0,
         )
 
     def predict_dataloader(self):
@@ -230,7 +230,7 @@ class MMCDataModule(L.LightningDataModule):
             collate_fn=collate_fn,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            persistent_workers=True,
+            persistent_workers=self.num_workers > 0,
         )
 
     def test_dataloader(self):

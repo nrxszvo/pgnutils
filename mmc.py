@@ -221,7 +221,7 @@ class MimicChessCoreModule(L.LightningModule):
         probs, tokens = torch.sort(probs, dim=-2, descending=True)
         tgt = batch["w_target"]
         tgt[:, 1::2] = batch["b_target"][:, 1::2]
-        return tokens, probs, batch["heads"], batch["opening"], tgt.unsqueeze(-1)
+        return tokens, probs, batch["heads"], batch["opening"], tgt.unsqueeze(1)
 
     def fit(self, datamodule, ckpt=None):
         self.trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt)
