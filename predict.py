@@ -6,7 +6,7 @@ from pgn.py.lib.reconstruct import count_invalid
 
 import torch
 from config import get_config
-from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
+from mmc import MimicChessCoreModule, MMCModuleArgs
 from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
 
@@ -14,23 +14,109 @@ from model import ModelArgs
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
 parser.add_argument("--cp", required=True, help="checkpoint file")
+parser.add_argument('--bs', default=None, type=int, help='batch size')
 
 
-def main():
-    args = parser.parse_args()
-    cfgfn = args.cfg
-    cfgyml = get_config(cfgfn)
+def select_heads(data, heads):
+    hdata = torch.index_select(data, 0, heads[:, 0])
+    bhdata = torch.index_select(data, 0, heads[:, 1])
+    hdata[:, :, 1::2] = bhdata[:, :, 1::2]
+    return hdata
 
-    n_workers = os.cpu_count() - 1
-    torch.set_float32_matmul_precision("high")
-    torch.manual_seed(cfgyml.random_seed)
 
+class LegalGameStats:
+    def __init__(self):
+        self.nvalid_games = 0
+        self.ntotal_games = 0
+        self.nvalid_moves = 0
+        self.ntotal_moves = 0
+
+    def eval(self, tokens, opening, tgts):
+        self.ntotal_games += tokens.shape[0]
+        for game in zip(tokens, opening, tgts):
+            pred, opn, tgt = game
+            nmoves, nfail = count_invalid(pred[0], opn, tgt[0])
+            self.nvalid_moves += nmoves - nfail
+            self.ntotal_moves += nmoves
+            if nfail == 0:
+                self.nvalid_games += 1
+
+    def report(self):
+        print(f"Legal game frequency: {100*self.nvalid_games/self.ntotal_games:.1f}%")
+        print(f"Legal move frequency: {100*self.nvalid_moves/self.ntotal_moves:.1f}%")
+
+
+class HeadStats:
+    def __init__(self, nheads):
+        self.nheads = nheads
+        self.head_matches = 0
+        self.adj_matches = 0
+        self.total_preds = 0
+
+    def eval(self, probs, heads, tgts):
+        breakpoint()
+        _, _, seqlen = probs.shape
+        max_heads = probs[:, 0].reshape(-1, self.nheads, seqlen).max(dim=1)[1]
+        head_matches = max_heads == heads[:, 0:1]
+        head_matches[:, 1::2] = max_heads[:, 1::2] == heads[:, 1:2]
+        head_matches[tgts[:, 0] == NOOP] = 0
+        self.head_matches += head_matches.sum()
+
+        adj_matches = (max_heads == heads[:, 0:1] - 1) | (
+            max_heads == heads[:, 0:1] + 1
+        )
+        adj_matches[:, 1::2] = (max_heads[:, 1::2] == heads[:, 1:2] - 1) | (
+            max_heads[:, 1::2] == heads[:, 1:2] + 1
+        )
+        adj_matches[tgts[:, 0] == NOOP] = 0
+        self.adj_matches += adj_matches.sum()
+
+        npred = (tgts != NOOP).sum()
+        self.total_preds += npred
+
+    def report(self):
+        print(f"Head accuracy: {100*self.head_matches/self.total_preds:.2f}%")
+        print(f"Adjacent Head accuracy: {100*self.adj_matches/self.total_preds:.2f}%")
+
+
+class MoveStats:
+    def __init__(self, ns=[3, 5]):
+        self.stats = [{"n": n, "matches": 0} for n in ns]
+        self.total_preds = 0
+
+    def eval(self, tokens, heads, tgts):
+        self.total_preds += (tgts != NOOP).sum()
+        for s in self.stats:
+            move_matches = (tokens[:, : s["n"]] == tgts).sum(dim=1, keepdim=True)
+            move_matches[tgts == NOOP] = 0
+            s["matches"] += move_matches.sum()
+
+    def report(self):
+        for s in self.stats:
+            print(f"Top {s['n']} accuracy: {100*s['matches']/self.total_preds:.2f}%")
+
+
+def evaluate(outputs, nheads):
+    gameStats = LegalGameStats()
+    headStats = HeadStats(nheads)
+    moveStats = MoveStats()
+    nbatch = len(outputs)
+    for i, (tokens, probs, heads, opening, tgts) in enumerate(outputs):
+        print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
+        head_tokens = select_heads(tokens, heads)
+        headStats.eval(probs, heads, tgts)
+        moveStats.eval(head_tokens, heads, tgts)
+        gameStats.eval(head_tokens, opening, tgts)
+
+    print()
+    gameStats.report()
+    moveStats.report()
+    headStats.report()
+
+
+def predict(cfgyml, n_heads, cp, fmd, n_workers):
     model_args = ModelArgs(cfgyml.model_args)
-    model_args.n_elo_heads = len(cfgyml.elo_edges) + 1
-
-    with open(os.path.join(cfgyml.datadir, "fmd.json")) as f:
-        fmd = json.load(f)
-
+    model_args.n_elo_heads = n_heads
     module_args = MMCModuleArgs(
         "prediction",
         os.path.join("outputs", "dummy"),
@@ -44,7 +130,7 @@ def main():
         "auto",
         1,
     )
-    mmc = MimicChessCoreModule.load_from_checkpoint(args.cp, params=module_args)
+    mmc = MimicChessCoreModule.load_from_checkpoint(cp, params=module_args)
     dm = MMCDataModule(
         cfgyml.datadir,
         cfgyml.elo_edges,
@@ -52,75 +138,28 @@ def main():
         cfgyml.batch_size,
         n_workers,
     )
-    outputs = mmc.predict(dm)
+    return mmc.predict(dm)
 
-    def select_heads(data, heads):
-        hdata = torch.index_select(data, 0, heads[:, 0])
-        bhdata = torch.index_select(data, 0, heads[:, 1])
-        hdata[:, :, 1::2] = bhdata[:, :, 1::2]
-        return hdata
 
-    def evaluate(outputs):
-        npass = 0
-        ngm = 0
-        nvalid = 0
-        ntotal = 0
-        nbatch = len(outputs)
-        top_n_stats = [
-            {"n": 3, "move_match": 0},
-            {"n": 5, "move_match": 0},
-        ]
-        ht_matches = 0
-        aht_matches = 0
-        ntotalpred = 0
-        for i, (tokens, probs, heads, opening, tgts) in enumerate(outputs):
-            print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-            _, _, seqlen = probs.shape
-            max_heads = (
-                probs[:, 0].reshape(-1, model_args.n_elo_heads, seqlen).max(dim=1)[1]
-            )
-            head_matches = max_heads == heads[:, 0:1]
-            head_matches[:, 1::2] = max_heads[:, 1::2] == heads[:, 1:2]
-            head_matches[tgts[:, 0] == NOOP] = 0
-            ht_matches += head_matches.sum()
+def main():
+    args = parser.parse_args()
+    cfgfn = args.cfg
+    cfgyml = get_config(cfgfn)
 
-            adj_matches = (max_heads == heads[:, 0:1] - 1) | (
-                max_heads == heads[:, 0:1] + 1
-            )
-            adj_matches[:, 1::2] = (max_heads[:, 1::2] == heads[:, 1:2] - 1) | (
-                max_heads[:, 1::2] == heads[:, 1:2] + 1
-            )
-            adj_matches[tgts[:, 0] == NOOP] = 0
-            aht_matches += adj_matches.sum()
+    n_workers = os.cpu_count() - 1
+    torch.set_float32_matmul_precision("high")
+    torch.manual_seed(cfgyml.random_seed)
 
-            npred = (tgts != NOOP).sum()
-            ntotalpred += npred
+    if args.bs:
+        cfgyml.batch_size = args.bs
 
-            for s in top_n_stats:
-                head_tokens = select_heads(tokens, heads)
-                move_matches = (head_tokens[:, : s["n"]] == tgts).sum(
-                    dim=1, keepdim=True
-                )
-                move_matches[tgts == NOOP] = 0
-                s["move_match"] += move_matches.sum()
+    with open(os.path.join(cfgyml.datadir, "fmd.json")) as f:
+        fmd = json.load(f)
 
-            ngm += head_tokens.shape[0]
-            for game in zip(head_tokens, opening, tgts):
-                pred, opn, tgt = game
-                nmoves, nfail = count_invalid(pred[0], opn, tgt[0])
-                nvalid += nmoves - nfail
-                ntotal += nmoves
-                if nfail == 0:
-                    npass += 1
-        print()
-        print(f"Legal game frequency: {100*npass/ngm:.1f}%")
-        print(f"Legal move frequency: {100*nvalid/ntotal:.1f}%")
-        print(f"Head accuracy: {100*ht_matches/ntotalpred:.2f}%")
-        print(f"Adjacent Head accuracy: {100*aht_matches/ntotalpred:.2f}%")
-        for s in top_n_stats:
-            print(f"Top {s['n']} accuracy: {100*s['move_match']/ntotalpred:.2f}%")
+    n_heads = len(cfgyml.elo_edges) + 1
 
-    evaluate(outputs)
+    outputs = predict(cfgyml, n_heads, args.cp, fmd, n_workers)
+    evaluate(outputs, n_heads)
 
 
 if __name__ == "__main__":

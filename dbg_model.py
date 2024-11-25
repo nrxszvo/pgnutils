@@ -95,7 +95,6 @@ class Attention(nn.Module):
         self.head_dim = args.dim // args.n_heads
 
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
-        self.out_dim = args.dim
         n_total_heads = args.n_heads
         self.n_orig_local_heads = self.n_local_heads
         self.batch_mul = 1
@@ -106,7 +105,6 @@ class Attention(nn.Module):
             self.n_local_heads *= args.n_elo_heads
             self.n_kv_heads *= args.n_elo_heads
             self.n_local_kv_heads *= args.n_elo_heads
-            self.out_dim *= args.n_elo_heads
 
         self.wq = nn.Linear(
             args.dim,
