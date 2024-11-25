@@ -28,10 +28,6 @@ def main():
     model_args = ModelArgs(cfgyml.model_args)
     model_args.n_elo_heads = len(cfgyml.elo_edges) + 1
 
-    datadirs = {"core": cfgyml.datadir}
-    for elo in os.listdir(os.path.join(cfgyml.datadir, "elos")):
-        datadirs[elo] = os.path.join(cfgyml.datadir, "elos", elo)
-
     with open(os.path.join(cfgyml.datadir, "fmd.json")) as f:
         fmd = json.load(f)
 
@@ -49,17 +45,14 @@ def main():
         1,
     )
     mmc = MimicChessCoreModule.load_from_checkpoint(args.cp, params=module_args)
-    outputs = {}
-    for dataname, pth in datadirs.items():
-        print(f"Predicting {dataname}")
-        dm = MMCDataModule(
-            pth,
-            cfgyml.elo_edges,
-            model_args.max_seq_len,
-            cfgyml.batch_size,
-            n_workers,
-        )
-        outputs[dataname] = mmc.predict(dm)
+    dm = MMCDataModule(
+        cfgyml.datadir,
+        cfgyml.elo_edges,
+        model_args.max_seq_len,
+        cfgyml.batch_size,
+        n_workers,
+    )
+    outputs = mmc.predict(dm)
 
     def select_heads(data, heads):
         hdata = torch.index_select(data, 0, heads[:, 0])
@@ -122,14 +115,12 @@ def main():
         print()
         print(f"Legal game frequency: {100*npass/ngm:.1f}%")
         print(f"Legal move frequency: {100*nvalid/ntotal:.1f}%")
-        print(f"Head accuracy: {100*ht_matches/npred:.2f}%")
-        print(f"Adjacent Head accuracy: {100*aht_matches/npred:.2f}%")
+        print(f"Head accuracy: {100*ht_matches/ntotalpred:.2f}%")
+        print(f"Adjacent Head accuracy: {100*aht_matches/ntotalpred:.2f}%")
         for s in top_n_stats:
-            print(f"Top {s['n']} accuracy: {100*s['move_match']/npred:.2f}%")
+            print(f"Top {s['n']} accuracy: {100*s['move_match']/ntotalpred:.2f}%")
 
-    for name, data in outputs.items():
-        print(f"Evaluating {name}")
-        evaluate(data)
+    evaluate(outputs)
 
 
 if __name__ == "__main__":

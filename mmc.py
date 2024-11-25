@@ -219,6 +219,8 @@ class MimicChessCoreModule(L.LightningModule):
         logits = self._chomp_logits(logits)
         probs = torch.softmax(logits, dim=-2)
         probs, tokens = torch.sort(probs, dim=-2, descending=True)
+        probs = probs[:, :5]
+        tokens = tokens[:, :5]
         tgt = batch["w_target"]
         tgt[:, 1::2] = batch["b_target"][:, 1::2]
         return tokens, probs, batch["heads"], batch["opening"], tgt.unsqueeze(1)
