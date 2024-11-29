@@ -14,7 +14,7 @@ from model import ModelArgs
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
 parser.add_argument("--cp", required=True, help="checkpoint file")
-parser.add_argument('--bs', default=None, type=int, help='batch size')
+parser.add_argument("--bs", default=None, type=int, help="batch size")
 
 
 def select_heads(data, heads):
@@ -47,14 +47,17 @@ class LegalGameStats:
 
 
 class HeadStats:
-    def __init__(self, nheads):
+    def __init__(self, nheads, batch_size):
         self.nheads = nheads
+        self.offset = torch.ones((batch_size, 1), dtype=torch.int32)
+        for i in range(batch_size):
+            self.offset[i, 0] = i * nheads
         self.head_matches = 0
         self.adj_matches = 0
         self.total_preds = 0
 
     def eval(self, probs, heads, tgts):
-        breakpoint()
+        heads -= self.offset
         _, _, seqlen = probs.shape
         max_heads = probs[:, 0].reshape(-1, self.nheads, seqlen).max(dim=1)[1]
         head_matches = max_heads == heads[:, 0:1]
@@ -96,9 +99,10 @@ class MoveStats:
             print(f"Top {s['n']} accuracy: {100*s['matches']/self.total_preds:.2f}%")
 
 
+@torch.inference_mode()
 def evaluate(outputs, nheads):
     gameStats = LegalGameStats()
-    headStats = HeadStats(nheads)
+    headStats = HeadStats(nheads, outputs[0][2].shape[0])
     moveStats = MoveStats()
     nbatch = len(outputs)
     for i, (tokens, probs, heads, opening, tgts) in enumerate(outputs):
