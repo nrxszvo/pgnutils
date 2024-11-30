@@ -55,11 +55,14 @@ class HeadStats:
         self.head_matches = 0
         self.adj_matches = 0
         self.total_preds = 0
+        self.stds = []
 
     def eval(self, probs, heads, tgts):
         heads -= self.offset
         _, seqlen = probs.shape
-        max_heads = probs.reshape(-1, self.nheads, seqlen).max(dim=1)[1]
+        head_probs = probs.reshape(-1, self.nheads, seqlen)
+        self.stds.append(torch.std(head_probs, dim=1).mean())
+        max_heads = head_probs.max(dim=1)[1]
         head_matches = max_heads == heads[:, 0:1]
         head_matches[:, 1::2] = max_heads[:, 1::2] == heads[:, 1:2]
         head_matches[tgts[:, 0] == NOOP] = 0
@@ -80,6 +83,7 @@ class HeadStats:
     def report(self):
         print(f"Head accuracy: {100*self.head_matches/self.total_preds:.2f}%")
         print(f"Adjacent Head accuracy: {100*self.adj_matches/self.total_preds:.2f}%")
+        print(f"Head std: {100*torch.tensor(self.stds).mean():.2f}%")
 
 
 class MoveStats:

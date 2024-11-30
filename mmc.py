@@ -228,8 +228,8 @@ class MimicChessCoreModule(L.LightningModule):
         bs, seqlen = tgt.shape
         bsheads, nclass, _ = probs.shape
         nheads = bsheads // bs
-        is_tgt = tgt[:, None].repeat(1, nheads, 1).reshape(-1, seqlen)
-        mask = F.one_hot(is_tgt, nclass).permute(0, 2, 1)
+        oh_tgt = tgt[:, None].repeat(1, nheads, 1).reshape(-1, seqlen)
+        mask = F.one_hot(oh_tgt, nclass).permute(0, 2, 1)
         tprobs = (probs * mask).sum(dim=1)
 
         return {
