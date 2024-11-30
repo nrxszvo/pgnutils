@@ -58,8 +58,8 @@ class HeadStats:
 
     def eval(self, probs, heads, tgts):
         heads -= self.offset
-        _, _, seqlen = probs.shape
-        max_heads = probs[:, 0].reshape(-1, self.nheads, seqlen).max(dim=1)[1]
+        _, seqlen = probs.shape
+        max_heads = probs.reshape(-1, self.nheads, seqlen).max(dim=1)[1]
         head_matches = max_heads == heads[:, 0:1]
         head_matches[:, 1::2] = max_heads[:, 1::2] == heads[:, 1:2]
         head_matches[tgts[:, 0] == NOOP] = 0
@@ -83,7 +83,7 @@ class HeadStats:
 
 
 class MoveStats:
-    def __init__(self, ns=[3, 5]):
+    def __init__(self, ns=[1, 3, 5]):
         self.stats = [{"n": n, "matches": 0} for n in ns]
         self.total_preds = 0
 
@@ -102,15 +102,16 @@ class MoveStats:
 @torch.inference_mode()
 def evaluate(outputs, nheads):
     gameStats = LegalGameStats()
-    headStats = HeadStats(nheads, outputs[0][2].shape[0])
+    bs = outputs[0]["heads"].shape[0]
+    headStats = HeadStats(nheads, bs)
     moveStats = MoveStats()
     nbatch = len(outputs)
-    for i, (tokens, probs, heads, opening, tgts) in enumerate(outputs):
+    for i, d in enumerate(outputs):
         print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-        head_tokens = select_heads(tokens, heads)
-        headStats.eval(probs, heads, tgts)
-        moveStats.eval(head_tokens, heads, tgts)
-        gameStats.eval(head_tokens, opening, tgts)
+        head_tokens = select_heads(d["sorted_tokens"], d["heads"])
+        headStats.eval(d["target_probs"], d["heads"], d["targets"])
+        moveStats.eval(head_tokens, d["heads"], d["targets"])
+        gameStats.eval(head_tokens, d["opening"], d["targets"])
 
     print()
     gameStats.report()

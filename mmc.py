@@ -218,12 +218,28 @@ class MimicChessCoreModule(L.LightningModule):
         logits = self(batch["input"])
         logits = self._chomp_logits(logits)
         probs = torch.softmax(logits, dim=-2)
-        probs, tokens = torch.sort(probs, dim=-2, descending=True)
-        probs = probs[:, :5]
-        tokens = tokens[:, :5]
+        sprobs, stokens = torch.sort(probs, dim=-2, descending=True)
+        sprobs = sprobs[:, :5]
+        stokens = stokens[:, :5]
+
         tgt = batch["w_target"]
         tgt[:, 1::2] = batch["b_target"][:, 1::2]
-        return tokens, probs, batch["heads"], batch["opening"], tgt.unsqueeze(1)
+
+        bs, seqlen = tgt.shape
+        bsheads, nclass, _ = probs.shape
+        nheads = bsheads // bs
+        is_tgt = tgt[:, None].repeat(1, nheads, 1).reshape(-1, seqlen)
+        mask = F.one_hot(is_tgt, nclass).permute(0, 2, 1)
+        tprobs = (probs * mask).sum(dim=1)
+
+        return {
+            "sorted_tokens": stokens,
+            "sorted_probs": sprobs,
+            "target_probs": tprobs,
+            "heads": batch["heads"],
+            "opening": batch["opening"],
+            "targets": tgt.unsqueeze(1),
+        }
 
     def fit(self, datamodule, ckpt=None):
         self.trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt)
