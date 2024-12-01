@@ -58,10 +58,12 @@ class HeadStats:
         self.stds = []
 
     def eval(self, probs, heads, tgts):
+        breakpoint()
         heads -= self.offset
         _, seqlen = probs.shape
         head_probs = probs.reshape(-1, self.nheads, seqlen)
-        self.stds.append(torch.std(head_probs, dim=1).mean())
+        stds = torch.std(head_probs, dim=1)
+        self.stds.append(stds.mean())
         max_heads = head_probs.max(dim=1)[1]
         head_matches = max_heads == heads[:, 0:1]
         head_matches[:, 1::2] = max_heads[:, 1::2] == heads[:, 1:2]
@@ -71,8 +73,8 @@ class HeadStats:
         adj_matches = (max_heads == heads[:, 0:1] - 1) | (
             max_heads == heads[:, 0:1] + 1
         )
-        adj_matches[:, 1::2] = (max_heads[:, 1::2] == heads[:, 1:2] - 1) | (
-            max_heads[:, 1::2] == heads[:, 1:2] + 1
+        adj_matches[:, 1::2] = (max_heads[:, 1::2] == (heads[:, 1:2] - 1)) | (
+            max_heads[:, 1::2] == (heads[:, 1:2] + 1)
         )
         adj_matches[tgts[:, 0] == NOOP] = 0
         self.adj_matches += adj_matches.sum()
