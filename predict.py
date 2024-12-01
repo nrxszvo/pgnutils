@@ -53,12 +53,13 @@ class HeadStats:
         for i in range(batch_size):
             self.offset[i, 0] = i * nheads
         self.head_matches = 0
+        self.skewed_matches = 0
+        self.skewed_total = 0
         self.adj_matches = 0
         self.total_preds = 0
         self.stds = []
 
     def eval(self, probs, heads, tgts):
-        breakpoint()
         heads -= self.offset
         _, seqlen = probs.shape
         head_probs = probs.reshape(-1, self.nheads, seqlen)
@@ -69,6 +70,10 @@ class HeadStats:
         head_matches[:, 1::2] = max_heads[:, 1::2] == heads[:, 1:2]
         head_matches[tgts[:, 0] == NOOP] = 0
         self.head_matches += head_matches.sum()
+        for i, std in enumerate(stds):
+            idx = (std > 0.02).nonzero()[:, 0]
+            self.skewed_matches += head_matches[i, idx].sum()
+            self.skewed_total += idx.shape[0]
 
         adj_matches = (max_heads == heads[:, 0:1] - 1) | (
             max_heads == heads[:, 0:1] + 1
@@ -86,6 +91,7 @@ class HeadStats:
         print(f"Head accuracy: {100*self.head_matches/self.total_preds:.2f}%")
         print(f"Adjacent Head accuracy: {100*self.adj_matches/self.total_preds:.2f}%")
         print(f"Head std: {100*torch.tensor(self.stds).mean():.2f}%")
+        print(f"Skewed accuracy: {100*self.skewed_matches/self.skewed_total:.2f}%")
 
 
 class MoveStats:
