@@ -28,7 +28,7 @@ def rand_select_heads(data, batch_size):
     n_heads = data.shape[0] // batch_size
     heads = torch.empty(batch_size, dtype=torch.int64)
     for i in range(batch_size):
-        heads[i] = i*n_heads + torch.randint(high=n_heads, size=(1,))
+        heads[i] = i * n_heads + torch.randint(high=n_heads, size=(1,))
     return torch.index_select(data, 0, heads)
 
 
@@ -57,9 +57,6 @@ class LegalGameStats:
 class HeadStats:
     def __init__(self, nheads, batch_size):
         self.nheads = nheads
-        self.offset = torch.ones((batch_size, 1), dtype=torch.int32)
-        for i in range(batch_size):
-            self.offset[i, 0] = i * nheads
         self.head_matches = 0
         self.skewed_matches = 0
         self.skewed_total = 0
@@ -68,7 +65,6 @@ class HeadStats:
         self.stds = []
 
     def eval(self, probs, heads, tgts):
-        heads -= self.offset
         _, seqlen = probs.shape
         head_probs = probs.reshape(-1, self.nheads, seqlen)
         stds = torch.std(head_probs, dim=1)
@@ -103,45 +99,68 @@ class HeadStats:
 
 
 class MoveStats:
-    def __init__(self, ns=[1, 3, 5]):
-        self.stats = [{"n": n, "matches": 0} for n in ns]
-        self.total_preds = 0
+    def __init__(self, elo_edges, ns=[1, 3, 5]):
+        self.edges = elo_edges
+        self.nheads = len(elo_edges)
+        self.stats = [{"n": n, "matches": [0] * self.nheads} for n in ns]
+        self.total_preds = [0] * self.nheads
 
-    def eval(self, tokens, tgts):
-        self.total_preds += (tgts != NOOP).sum()
+    def eval(self, tokens, heads, tgts):
+        for i in range(self.nheads):
+            for j in range(heads.shape[1]):
+                idx = (heads[:, j] == i).nonzero()[:, 0]
+                self.total_preds[i] += (torch.index_select(tgts, 0, idx) != NOOP).sum()
+
         for s in self.stats:
             move_matches = (tokens[:, : s["n"]] == tgts).sum(dim=1, keepdim=True)
             move_matches[tgts == NOOP] = 0
-            s["matches"] += move_matches.sum()
+            for i in range(self.nheads):
+                for j in range(heads.shape[1]):
+                    idx = (heads[:, j] == i).nonzero()[:, 0]
+                    s["matches"][i] += torch.index_select(move_matches, 0, idx).sum()
 
     def report(self):
         for s in self.stats:
-            print(f"Top {s['n']} accuracy: {100*s['matches']/self.total_preds:.2f}%")
+            tpred = 0
+            tmatch = 0
+            print(f'Top {s["n"]} accuracy:')
+            for i in range(self.nheads):
+                if self.total_preds[i] > 0:
+                    e = self.edges[i]
+                    print(f"\t{e}: {100*s['matches'][i]/self.total_preds[i]:.2f}%")
+                    tpred += self.total_preds[i]
+                    tmatch += s["matches"][i]
+            print(f"\tOverall: {100*tmatch/tpred:.2f}%")
 
 
 @torch.inference_mode()
-def evaluate(outputs, nheads):
+def evaluate(outputs, elo_edges, n_heads):
     gameStats = LegalGameStats()
     bs = outputs[0]["heads"].shape[0]
-    headStats = HeadStats(nheads, bs)
-    moveStats = MoveStats()
-    randStats = MoveStats()
+    headStats = HeadStats(n_heads, bs)
+    moveStats = MoveStats(elo_edges)
+    randStats = MoveStats(elo_edges)
     nbatch = len(outputs)
+    offset = torch.ones((bs, 1), dtype=torch.int32)
+    for i in range(bs):
+        offset[i, 0] = i * n_heads
+
     for i, d in enumerate(outputs):
         print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-
+        oheads = d["heads"] - offset
         head_tokens = select_heads(d["sorted_tokens"], d["heads"])
-        moveStats.eval(head_tokens, d["targets"])
+        moveStats.eval(head_tokens, oheads, d["targets"])
         gameStats.eval(head_tokens, d["opening"], d["targets"])
 
-        bs = d['heads'].shape[0]
-        rand_tokens = rand_select_heads(d['sorted_tokens'], bs)
-        randStats.eval(rand_tokens, d['targets']) 
+        rand_tokens = rand_select_heads(d["sorted_tokens"], bs)
+        randStats.eval(rand_tokens, oheads, d["targets"])
 
-        headStats.eval(d["target_probs"], d["heads"], d["targets"])
+        headStats.eval(d["target_probs"], oheads, d["targets"])
     print()
     gameStats.report()
+    print("Target head predictions...")
     moveStats.report()
+    print("Random head predictions...")
     randStats.report()
     headStats.report()
 
@@ -188,10 +207,11 @@ def main():
     with open(os.path.join(cfgyml.datadir, "fmd.json")) as f:
         fmd = json.load(f)
 
+    breakpoint()
     n_heads = len(cfgyml.elo_edges) + 1
 
     outputs = predict(cfgyml, n_heads, args.cp, fmd, n_workers)
-    evaluate(outputs, n_heads)
+    evaluate(outputs, cfgyml.elo_edges, n_heads)
 
 
 if __name__ == "__main__":
