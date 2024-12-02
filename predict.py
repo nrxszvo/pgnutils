@@ -24,6 +24,14 @@ def select_heads(data, heads):
     return hdata
 
 
+def rand_select_heads(data, batch_size):
+    n_heads = data.shape[0] // batch_size
+    heads = torch.empty(batch_size, dtype=torch.int64)
+    for i in range(batch_size):
+        heads[i] = i*n_heads + torch.randint(high=n_heads, size=(1,))
+    return torch.index_select(data, 0, heads)
+
+
 class LegalGameStats:
     def __init__(self):
         self.nvalid_games = 0
@@ -99,7 +107,7 @@ class MoveStats:
         self.stats = [{"n": n, "matches": 0} for n in ns]
         self.total_preds = 0
 
-    def eval(self, tokens, heads, tgts):
+    def eval(self, tokens, tgts):
         self.total_preds += (tgts != NOOP).sum()
         for s in self.stats:
             move_matches = (tokens[:, : s["n"]] == tgts).sum(dim=1, keepdim=True)
@@ -117,17 +125,24 @@ def evaluate(outputs, nheads):
     bs = outputs[0]["heads"].shape[0]
     headStats = HeadStats(nheads, bs)
     moveStats = MoveStats()
+    randStats = MoveStats()
     nbatch = len(outputs)
     for i, d in enumerate(outputs):
         print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
+
         head_tokens = select_heads(d["sorted_tokens"], d["heads"])
-        headStats.eval(d["target_probs"], d["heads"], d["targets"])
-        moveStats.eval(head_tokens, d["heads"], d["targets"])
+        moveStats.eval(head_tokens, d["targets"])
         gameStats.eval(head_tokens, d["opening"], d["targets"])
 
+        bs = d['heads'].shape[0]
+        rand_tokens = rand_select_heads(d['sorted_tokens'], bs)
+        randStats.eval(rand_tokens, d['targets']) 
+
+        headStats.eval(d["target_probs"], d["heads"], d["targets"])
     print()
     gameStats.report()
     moveStats.report()
+    randStats.report()
     headStats.report()
 
 
