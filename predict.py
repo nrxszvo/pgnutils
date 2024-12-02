@@ -207,7 +207,6 @@ def main():
     with open(os.path.join(cfgyml.datadir, "fmd.json")) as f:
         fmd = json.load(f)
 
-    breakpoint()
     n_heads = len(cfgyml.elo_edges) + 1
 
     outputs = predict(cfgyml, n_heads, args.cp, fmd, n_workers)
