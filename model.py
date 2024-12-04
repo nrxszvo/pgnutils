@@ -5,21 +5,15 @@ import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import fairscale.nn.model_parallel.initialize as fs_init
 import torch
 import torch.nn.functional as F
-from fairscale.nn.model_parallel.layers import (
-    ColumnParallelLinear,
-    RowParallelLinear,
-    VocabParallelEmbedding,
-)
 from torch import nn
 
 
 @dataclass
 class ModelArgs:
     dim: int = 4096
-    n_output_heads: int = 12
+    n_elo_heads: int = 1
     n_layers: int = 32
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
@@ -92,38 +86,45 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 
 class Attention(nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelArgs, is_elo_head: bool = False):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
-        model_parallel_size = fs_init.get_model_parallel_world_size()
+        model_parallel_size = 1
         self.n_local_heads = args.n_heads // model_parallel_size
         self.n_local_kv_heads = self.n_kv_heads // model_parallel_size
-        self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
 
-        self.wq = ColumnParallelLinear(
+        self.n_rep = self.n_local_heads // self.n_local_kv_heads
+        n_total_heads = args.n_heads
+        self.n_orig_local_heads = self.n_local_heads
+        self.batch_mul = 1
+
+        if is_elo_head:
+            self.batch_mul = args.n_elo_heads
+            n_total_heads *= args.n_elo_heads
+            self.n_local_heads *= args.n_elo_heads
+            self.n_kv_heads *= args.n_elo_heads
+            self.n_local_kv_heads *= args.n_elo_heads
+
+        self.wq = nn.Linear(
             args.dim,
-            args.n_heads * self.head_dim,
+            n_total_heads * self.head_dim,
             bias=False,
-            gather_output=False,
         )
-        self.wk = ColumnParallelLinear(
+        self.wk = nn.Linear(
             args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
-            gather_output=False,
         )
-        self.wv = ColumnParallelLinear(
+        self.wv = nn.Linear(
             args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
-            gather_output=False,
         )
-        self.wo = RowParallelLinear(
+        self.wo = nn.Linear(
             args.n_heads * self.head_dim,
             args.dim,
             bias=False,
-            input_is_parallel=True,
         )
 
     def forward(
@@ -163,7 +164,10 @@ class Attention(nn.Module):
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
-        output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        output = output.view(bsz * self.batch_mul, self.n_orig_local_heads, seqlen, -1)
+        output = (
+            output.transpose(1, 2).contiguous().view(bsz * self.batch_mul, seqlen, -1)
+        )
         return self.wo(output)
 
 
@@ -182,21 +186,22 @@ class FeedForward(nn.Module):
             hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
-        self.w1 = ColumnParallelLinear(dim, hidden_dim, bias=False, gather_output=False)
-        self.w2 = RowParallelLinear(hidden_dim, dim, bias=False, input_is_parallel=True)
-        self.w3 = ColumnParallelLinear(dim, hidden_dim, bias=False, gather_output=False)
+        self.w1 = nn.Linear(dim, hidden_dim, bias=False)
+        self.w2 = nn.Linear(hidden_dim, dim, bias=False)
+        self.w3 = nn.Linear(dim, hidden_dim, bias=False)
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, layer_id: int, args: ModelArgs):
+    def __init__(self, layer_id: int, args: ModelArgs, is_elo_head: bool = False):
         super().__init__()
-        self.n_heads = args.n_heads
-        self.dim = args.dim
-        self.head_dim = args.dim // args.n_heads
-        self.attention = Attention(args)
+        self.is_elo_head = is_elo_head
+        if is_elo_head:
+            self.n_elo_heads = args.n_elo_heads
+
+        self.attention = Attention(args, is_elo_head)
         self.feed_forward = FeedForward(
             dim=args.dim,
             hidden_dim=4 * args.dim,
@@ -214,7 +219,17 @@ class TransformerBlock(nn.Module):
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
     ):
-        h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
+        if self.is_elo_head:
+            bs, slen, dim = x.shape
+            n_rep = self.n_elo_heads
+            res = (
+                x[:, None, :, :]
+                .expand(bs, n_rep, slen, dim)
+                .reshape(bs * n_rep, slen, dim)
+            )
+        else:
+            res = x
+        h = res + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -226,20 +241,24 @@ class Transformer(nn.Module):
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
-        self.tok_embeddings = VocabParallelEmbedding(params.vocab_size, params.dim)
+        self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
-            self.layers.append(TransformerBlock(layer_id, params))
+            self.layers.append(
+                TransformerBlock(
+                    layer_id, params, is_elo_head=layer_id == params.n_layers - 1
+                )
+            )
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
             params.max_seq_len * 2,
             params.rope_theta,
         )
-        self.output = ColumnParallelLinear(params.dim, params.vocab_size, bias=False)
 
     def forward(self, tokens: torch.Tensor, start_pos: int = 0):
         _bsz, seqlen = tokens.shape
