@@ -39,6 +39,11 @@ parser.add_argument(
     default=None,
     help="MMC checkpoint from which to resume training",
 )
+parser.add_argument(
+    "--classifier",
+    action="store_true",
+    help="train a classifier on top of pre-trained transformer",
+)
 
 
 def torch_dist_init():
@@ -69,7 +74,7 @@ def main():
         with open(os.path.join(save_path, "core_ckpt.txt"), "w") as f:
             f.write(args.core_ckpt)
     else:
-        save_path = os.path.join(args.save_path, "core", args.name)
+        save_path = os.path.join(args.save_path, args.name)
         os.makedirs(save_path, exist_ok=True)
 
     shutil.copyfile(args.cfg, os.path.join(save_path, args.cfg))
@@ -104,6 +109,7 @@ def main():
             cfgyml.random_seed,
             cfgyml.strategy,
             devices,
+            args.classifier,
         )
 
         mmc = MimicChessCoreModule(module_args)
@@ -113,7 +119,12 @@ def main():
         print(f"# model params: {nweights:.2e}")
         print(f"estimated TFLOPs: {est_tflops:.1f}")
 
-        mmc.fit(dm, ckpt=args.ckpt)
+        ckpt = args.ckpt
+        if args.classifier:
+            mmc.init_classifier(ckpt)
+            ckpt = None
+
+        mmc.fit(dm, ckpt=ckpt)
 
     datadir = cfgyml.datadir
     train_model(args.name, datadir, save_path)

@@ -14,7 +14,7 @@ from torch.optim.lr_scheduler import (
     StepLR,
 )
 
-from model import ModelArgs, Transformer
+from model import ModelArgs, Transformer, EloClassifier
 
 
 @dataclass
@@ -30,6 +30,7 @@ class MMCModuleArgs:
     random_seed: Optional[int]
     strategy: Optional[str]
     devices: Optional[int]
+    classifier: bool
 
 
 class MimicChessCoreModule(L.LightningModule):
@@ -81,7 +82,10 @@ class MimicChessCoreModule(L.LightningModule):
     def _init_model(self):
         if self.model is not None:
             return
-        self.model = Transformer(self.model_args)
+        if self.params.classifier:
+            self.model = EloClassifier(self.model_args)
+        else:
+            self.model = Transformer(self.model_args)
 
     def num_params(self):
         nparams = 0
@@ -166,16 +170,22 @@ class MimicChessCoreModule(L.LightningModule):
 
     def _separate_logits(self, logits, batch):
         logits = self._chomp_logits(logits)
-        wlogits = torch.index_select(logits, 0, batch["heads"][:, 0])
-        blogits = torch.index_select(logits, 0, batch["heads"][:, 1])
+        wlogits = torch.index_select(logits, 0, batch["offset_heads"][:, 0])
+        blogits = torch.index_select(logits, 0, batch["offset_heads"][:, 1])
         wtgt = batch["w_target"]
         btgt = batch["b_target"]
         return wlogits, blogits, wtgt, btgt
 
     def _get_loss(self, logits, batch):
-        wlogits, blogits, wtgt, btgt = self._separate_logits(logits, batch)
-        wloss = self.loss(wlogits, wtgt, ignore_index=self.NOOP)
-        bloss = self.loss(blogits, btgt, ignore_index=self.NOOP)
+        nhead = self.params.model_args.n_elo_heads
+        if self.params.classifier:
+            wloss = self.loss(logits[:, :nhead], batch["heads"][:, 0])
+            bloss = self.loss(logits[:, nhead:], batch["heads"][:, 1])
+        else:
+            wlogits, blogits, wtgt, btgt = self._separate_logits(logits, batch)
+            wloss = self.loss(wlogits, wtgt, ignore_index=self.NOOP)
+            bloss = self.loss(blogits, btgt, ignore_index=self.NOOP)
+
         return (wloss + bloss) / 2
 
     def training_step(self, batch, batch_idx):
@@ -236,10 +246,23 @@ class MimicChessCoreModule(L.LightningModule):
             "sorted_tokens": stokens,
             "sorted_probs": sprobs,
             "target_probs": tprobs,
-            "heads": batch["heads"],
+            "heads": batch["offset_heads"],
             "opening": batch["opening"],
             "targets": tgt.unsqueeze(1),
         }
+
+    def init_classifier(self, ckpt_fn):
+        cf_dict = self.state_dict()
+        tf_dict = torch.load(ckpt_fn, map_location="cpu")["state_dict"]
+        tf_dict = {k: v for k, v in tf_dict.items() if k in cf_dict}
+        cf_dict.update(tf_dict)
+        self.load_state_dict(cf_dict)
+        for name, param in self.named_parameters():
+            if name.startswith("model.layers") or name in [
+                "model.tok_embeddings.weight",
+                "model.norm.weight",
+            ]:
+                param.requires_grad = False
 
     def fit(self, datamodule, ckpt=None):
         self.trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt)

@@ -27,8 +27,10 @@ def collate_fn(batch):
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
     wtargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     btargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
-    heads = torch.empty((bs, 2), dtype=torch.int32)
+    heads = torch.empty((bs, 2), dtype=torch.int64)
+    offset_heads = torch.empty((bs, 2), dtype=torch.int64)
 
+    nhead = batch[0]["nhead"]
     for i, d in enumerate(batch):
         inp = d["input"]
         wtgt = d["w_target"]
@@ -39,15 +41,17 @@ def collate_fn(batch):
         wtargets[i, :nt] = torch.from_numpy(wtgt)
         btargets[i, :nt] = torch.from_numpy(btgt)
         openings[i] = torch.from_numpy(d["opening"])
-        heads[i, 0] = i * batch[0]["nhead"] + d["w_head"]
-        heads[i, 1] = i * batch[0]["nhead"] + d["b_head"]
-
+        heads[i, 0] = d["w_head"]
+        heads[i, 1] = d["b_head"]
+        offset_heads[i, 0] = i * nhead + heads[i, 0]
+        offset_heads[i, 1] = i * nhead + heads[i, 1]
     return {
         "input": inputs,
         "w_target": wtargets,
         "b_target": btargets,
         "opening": openings,
         "heads": heads,
+        "offset_heads": offset_heads,
     }
 
 

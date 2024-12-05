@@ -234,6 +234,16 @@ class TransformerBlock(nn.Module):
         return out
 
 
+class EloBlock(nn.Module):
+    def __init__(self, args: ModelArgs):
+        super().__init__()
+        self.linear = nn.Linear(args.dim, args.dim, bias=False)
+        self.norm = RMSNorm(args.dim, eps=args.norm_eps)
+
+    def forward(self, x: torch.Tensor):
+        return self.linear(self.norm(x))
+
+
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -277,3 +287,51 @@ class Transformer(nn.Module):
         h = self.norm(h)
         output = self.output(h).float()
         return output
+
+
+class EloClassifier(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.vocab_size = params.vocab_size
+        self.n_layers = params.n_layers
+
+        self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
+
+        self.layers = torch.nn.ModuleList()
+
+        for layer_id in range(params.n_layers - 1):
+            self.layers.append(TransformerBlock(layer_id, params))
+
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        self.classifier = torch.nn.RNN(
+            params.dim,
+            2 * params.n_elo_heads,
+            bias=False,
+            batch_first=True,
+            nonlinearity="relu",
+        )
+
+        self.freqs_cis = precompute_freqs_cis(
+            params.dim // params.n_heads,
+            params.max_seq_len * 2,
+            params.rope_theta,
+        )
+
+    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
+        _bsz, seqlen = tokens.shape
+        h = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=1)
+
+        for layer in self.layers:
+            h = layer(h, start_pos, freqs_cis, mask)
+
+        h = self.norm(h)
+        _, output = self.classifier(h)
+        return output.squeeze().float()
