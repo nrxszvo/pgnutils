@@ -29,6 +29,7 @@ def collate_fn(batch):
     btargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     heads = torch.empty((bs, 2), dtype=torch.int64)
     offset_heads = torch.empty((bs, 2), dtype=torch.int64)
+    last_idx = torch.empty(bs, dtype=torch.int64)
 
     nhead = batch[0]["nhead"]
     for i, d in enumerate(batch):
@@ -45,6 +46,8 @@ def collate_fn(batch):
         heads[i, 1] = d["b_head"]
         offset_heads[i, 0] = i * nhead + heads[i, 0]
         offset_heads[i, 1] = i * nhead + heads[i, 1]
+        last_idx[i] = i * maxinp + d["n_inp"] - 1
+
     return {
         "input": inputs,
         "w_target": wtargets,
@@ -52,6 +55,7 @@ def collate_fn(batch):
         "opening": openings,
         "heads": heads,
         "offset_heads": offset_heads,
+        "last_idx": last_idx,
     }
 
 
@@ -105,6 +109,7 @@ class MMCDataset(Dataset):
             "w_head": w_head,
             "b_head": b_head,
             "nhead": len(self.elo_edges),
+            "n_inp": n_inp,
         }
 
 

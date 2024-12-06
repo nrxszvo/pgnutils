@@ -160,8 +160,8 @@ class MimicChessCoreModule(L.LightningModule):
         }
         return {"optimizer": optimizer, "lr_scheduler": config}
 
-    def forward(self, tokens):
-        return self.model(tokens)
+    def forward(self, tokens, last_idx):
+        return self.model(tokens, last_idx)
 
     def _chomp_logits(self, logits):
         logits = logits.permute(0, 2, 1)
@@ -189,7 +189,7 @@ class MimicChessCoreModule(L.LightningModule):
         return (wloss + bloss) / 2
 
     def training_step(self, batch, batch_idx):
-        logits = self(batch["input"])
+        logits = self(batch["input"], batch["last_idx"])
         loss = self._get_loss(logits, batch)
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
@@ -197,7 +197,7 @@ class MimicChessCoreModule(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        logits = self(batch["input"])
+        logits = self(batch["input"], batch["last_idx"])
         valid_loss = self._get_loss(logits, batch)
 
         if torch.isnan(valid_loss):
@@ -246,7 +246,8 @@ class MimicChessCoreModule(L.LightningModule):
             "sorted_tokens": stokens,
             "sorted_probs": sprobs,
             "target_probs": tprobs,
-            "heads": batch["offset_heads"],
+            "offset_heads": batch["offset_heads"],
+            "heads": batch["heads"],
             "opening": batch["opening"],
             "targets": tgt.unsqueeze(1),
         }

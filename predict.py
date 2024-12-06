@@ -109,7 +109,8 @@ class MoveStats:
         for i in range(self.nheads):
             for j in range(heads.shape[1]):
                 idx = (heads[:, j] == i).nonzero()[:, 0]
-                self.total_preds[i] += (torch.index_select(tgts, 0, idx) != NOOP).sum()
+                itgts = torch.index_select(tgts, 0, idx)
+                self.total_preds[i] += (itgts[:, 0, i::2] != NOOP).sum()
 
         for s in self.stats:
             move_matches = (tokens[:, : s["n"]] == tgts).sum(dim=1, keepdim=True)
@@ -117,7 +118,8 @@ class MoveStats:
             for i in range(self.nheads):
                 for j in range(heads.shape[1]):
                     idx = (heads[:, j] == i).nonzero()[:, 0]
-                    s["matches"][i] += torch.index_select(move_matches, 0, idx).sum()
+                    imatches = torch.index_select(move_matches, 0, idx)
+                    s["matches"][i] += imatches[:, 0, i::2].sum()
 
     def report(self):
         for s in self.stats:
@@ -141,21 +143,17 @@ def evaluate(outputs, elo_edges, n_heads):
     moveStats = MoveStats(elo_edges)
     randStats = MoveStats(elo_edges)
     nbatch = len(outputs)
-    offset = torch.ones((bs, 1), dtype=torch.int32)
-    for i in range(bs):
-        offset[i, 0] = i * n_heads
 
     for i, d in enumerate(outputs):
         print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-        oheads = d["heads"] - offset
-        head_tokens = select_heads(d["sorted_tokens"], d["heads"])
-        moveStats.eval(head_tokens, oheads, d["targets"])
+        head_tokens = select_heads(d["sorted_tokens"], d["offset_heads"])
+        moveStats.eval(head_tokens, d["heads"], d["targets"])
         gameStats.eval(head_tokens, d["opening"], d["targets"])
 
         rand_tokens = rand_select_heads(d["sorted_tokens"], bs)
-        randStats.eval(rand_tokens, oheads, d["targets"])
+        randStats.eval(rand_tokens, d["heads"], d["targets"])
 
-        headStats.eval(d["target_probs"], oheads, d["targets"])
+        headStats.eval(d["target_probs"], d["heads"], d["targets"])
     print()
     gameStats.report()
     print("Target head predictions...")
@@ -180,6 +178,7 @@ def predict(cfgyml, n_heads, cp, fmd, n_workers):
         cfgyml.random_seed,
         "auto",
         1,
+        False,
     )
     mmc = MimicChessCoreModule.load_from_checkpoint(cp, params=module_args)
     dm = MMCDataModule(

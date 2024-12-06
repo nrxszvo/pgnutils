@@ -234,16 +234,6 @@ class TransformerBlock(nn.Module):
         return out
 
 
-class EloBlock(nn.Module):
-    def __init__(self, args: ModelArgs):
-        super().__init__()
-        self.linear = nn.Linear(args.dim, args.dim, bias=False)
-        self.norm = RMSNorm(args.dim, eps=args.norm_eps)
-
-    def forward(self, x: torch.Tensor):
-        return self.linear(self.norm(x))
-
-
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -279,11 +269,10 @@ class Transformer(nn.Module):
         mask = None
         if seqlen > 1:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-
             mask = torch.triu(mask, diagonal=1)
 
         for layer in self.layers:
-            h = layer(h, start_pos, freqs_cis, mask)
+            h, _ = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
         output = self.output(h).float()
         return output
@@ -300,16 +289,20 @@ class EloClassifier(nn.Module):
 
         self.layers = torch.nn.ModuleList()
 
-        for layer_id in range(params.n_layers - 1):
+        for layer_id in range(params.n_classifier_layers):
             self.layers.append(TransformerBlock(layer_id, params))
 
-        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        self.classifier_norm = RMSNorm(params.dim, eps=params.norm_eps)
         self.classifier = torch.nn.RNN(
             params.dim,
-            2 * params.n_elo_heads,
+            params.dim,
             bias=False,
             batch_first=True,
             nonlinearity="relu",
+        )
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        self.classifier_output = torch.nn.Linear(
+            params.dim, 2 * params.n_elo_heads, bias=False
         )
 
         self.freqs_cis = precompute_freqs_cis(
@@ -318,7 +311,12 @@ class EloClassifier(nn.Module):
             params.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        last_idx: torch.Tensor,
+        start_pos: int = 0,
+    ):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
@@ -332,6 +330,10 @@ class EloClassifier(nn.Module):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
 
-        h = self.norm(h)
-        _, output = self.classifier(h)
-        return output.squeeze().float()
+        h = self.classifier_norm(h)
+        h, _ = self.classifier(h)
+        dim = h.shape[2]
+        h = h.reshape(-1, dim)
+        h = torch.index_select(h, 0, last_idx)
+        output = self.classifier_output(h.squeeze())
+        return output.float()
