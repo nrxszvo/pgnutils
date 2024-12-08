@@ -160,8 +160,11 @@ class MimicChessCoreModule(L.LightningModule):
         }
         return {"optimizer": optimizer, "lr_scheduler": config}
 
-    def forward(self, tokens, last_idx):
+    def forward_classifier(self, tokens, last_idx):
         return self.model(tokens, last_idx)
+
+    def forward(self, tokens):
+        return self.model(tokens)
 
     def _chomp_logits(self, logits):
         logits = logits.permute(0, 2, 1)

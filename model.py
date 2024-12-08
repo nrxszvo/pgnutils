@@ -272,7 +272,7 @@ class Transformer(nn.Module):
             mask = torch.triu(mask, diagonal=1)
 
         for layer in self.layers:
-            h, _ = layer(h, start_pos, freqs_cis, mask)
+            h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
         output = self.output(h).float()
         return output
