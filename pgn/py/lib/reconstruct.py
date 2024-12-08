@@ -21,7 +21,15 @@ def decode_mvid(mvid):
         return [(pid, r, f)]
 
 
-def update_to_uci(update, white, black, update_state=True):
+def promotion(state, dr):
+    if state.name == "P":
+        if state.color == inf.COLORW:
+            return dr == "8"
+        else:
+            return dr == "1"
+
+
+def update_to_uci(update, board, white, black, update_state=True, promote="q"):
     pid, dr, df = update
 
     if pid < 16:
@@ -35,6 +43,10 @@ def update_to_uci(update, white, black, update_state=True):
     if update_state:
         state[pid].rank = dr
         state[pid].file = df
+        if board[dr][df] is not None:
+            board[dr][df].captured = True
+        board[sr][sf] = None
+        board[dr][df] = state[pid]
 
     sr = val.int_to_rank(sr)
     dr = val.int_to_rank(dr)
@@ -44,24 +56,44 @@ def update_to_uci(update, white, black, update_state=True):
     src = f"{sf}{sr}"
     dst = f"{df}{dr}"
 
-    return f"{src}{dst}"
+    uci = f"{src}{dst}"
 
+    if promotion(state[pid], dr):
+        if update_state:
+            state[pid].name = promote.upper()
+        uci += promote
 
-def mvid_to_uci(mvid, white, black, update_state=True):
-    updates = decode_mvid(mvid)
-    uci = update_to_uci(updates[0], white, black, update_state)
-    if len(updates) == 2:
-        update_to_uci(updates[1], white, black, update_state)
     return uci
 
 
+def mvid_to_uci(mvid, board, white, black, update_state=True, promote="q"):
+    updates = decode_mvid(mvid)
+    uci = update_to_uci(updates[0], board, white, black, update_state, promote)
+    if len(updates) == 2:
+        update_to_uci(updates[1], board, white, black, update_state)
+    return uci
+
+
+def uci_to_mvid(uci, white, black):
+    sf = inf.FILE_TO_INT[uci[0]]
+    sr = inf.rank_to_int(uci[1])
+    dst = uci[2:4]
+    piece = None
+    for p in white + black:
+        if not p.captured and p.rank == sr and p.file == sf:
+            piece = p
+            break
+    mvid = piece.pid * 64 + inf.sqr_to_int(dst)
+    return mvid
+
+
 def count_invalid(mvids, opening, tgts):
-    _, white, black = inf.board_state()
+    board, white, black = inf.board_state()
     game = chess.pgn.Game()
     node = game
     nfail = 0
     for mvid in opening:
-        uci = mvid_to_uci(mvid, white, black)
+        uci = mvid_to_uci(mvid, board, white, black)
         node = node.add_variation(chess.Move.from_uci(uci))
 
     nmoves = len(mvids)
@@ -70,20 +102,20 @@ def count_invalid(mvids, opening, tgts):
             nmoves = i
             break
         try:
-            uci = mvid_to_uci(mvid, white, black, False)
+            uci = mvid_to_uci(mvid, board, white, black, False)
             if not node.board().is_legal(chess.Move.from_uci(uci)):
                 nfail += 1
         except chess.InvalidMoveError:
             nfail += 1
 
-        uci = mvid_to_uci(tgt, white, black)
+        uci = mvid_to_uci(tgt, board, white, black)
         node = node.add_variation(chess.Move.from_uci(uci))
 
     return nmoves, nfail
 
 
 def reconstruct(mvids):
-    _, white, black = inf.board_state()
+    board, white, black = inf.board_state()
     game = chess.pgn.Game()
     node = game
     uci_str = []
@@ -92,7 +124,7 @@ def reconstruct(mvids):
     nvalid = len(mvids)
     try:
         for i, mvid in enumerate(mvids):
-            uci = mvid_to_uci(mvid, white, black)
+            uci = mvid_to_uci(mvid, board, white, black)
             uci_str.append(uci)
             node = node.add_variation(chess.Move.from_uci(uci))
     except Exception as e:
