@@ -159,9 +159,10 @@ if __name__ == "__main__":
     games = parse_mvids(data["test"], data["mvids"])
     fn = partial(process_game, args)
     cheat_data = {}
+    chunksize = len(games) // (os.cpu_count() - 1) // 10
     start = time.time()
     with Pool(processes=os.cpu_count() - 1) as pool:
-        for cd, gidx in pool.imap_unordered(fn, games):
+        for cd, gidx in pool.imap_unordered(fn, games, chunksize=chunksize):
             cheat_data[gidx] = cd
             print(f"eta: {get_eta(len(games), len(cheat_data), start)}", end="\r")
 
@@ -173,9 +174,9 @@ if __name__ == "__main__":
     with open(os.path.join(args.datadir, "cheat_md.json"), "w") as f:
         json.dump(
             {
-                "mistake_threshold": args.cp_mistake_thresh,
-                "stockfish_depth": args.stockfish_depth,
+                "cp_mistake_threshold": args.cp_mistake_thresh,
                 "cp_loss_fraction": args.cp_loss_fraction,
+                "stockfish_depth": args.stockfish_depth,
             },
             f,
         )
