@@ -1,6 +1,8 @@
 import argparse
 import json
 import os
+from multiprocessing import Pool
+from functools import partial
 import time
 
 import chess
@@ -22,21 +24,6 @@ def get_gain_and_cp_loss(scores, idx):
     return gain, cp_loss
 
 
-def find_suspects(scores, mistake_thresh):
-    for idx in range(2, len(scores)):
-        if idx % 2 == 0:
-            gain = scores[idx - 1] - scores[idx - 2]
-            cp_loss = scores[idx - 1] - scores[idx]
-        else:
-            gain = scores[idx - 2] - scores[idx - 1]
-            cp_loss = scores[idx] - scores[idx - 1]
-        if gain > mistake_thresh and cp_loss < 0.3 * gain:
-            print(f"__{scores[idx]}__  ", end="", flush=True)
-        else:
-            print(f"{scores[idx]}  ", end="", flush=True)
-    print()
-
-
 class CheatGenerator:
     def __init__(self, sfbin, mistake_thresh, cp_loss_frac, depth_limit, verbose):
         self.engine = chess.engine.SimpleEngine.popen_uci(sfbin)
@@ -49,7 +36,7 @@ class CheatGenerator:
         else:
             self.printfn = lambda a=None, b=None, c=None: None
 
-    def __del__(self):
+    def close(self):
         self.engine.quit()
 
     def _is_miss(self, scores, idx):
@@ -121,22 +108,24 @@ class CheatGenerator:
 
 
 def parse_mvids(indices, mvids):
-    games = {}
+    games = []
     for gs, nmoves, gidx in indices:
-        games[gidx] = mvids[gs : gs + nmoves]
+        games.append((mvids[gs : gs + nmoves], gidx))
     return games
 
 
-def process_games(generator, games):
-    cheat_data = {}
-    start = time.time()
-    for gidx, game in games.items():
-        cm = generator.process_game(game, gidx)
-        if len(cm) > 0:
-            cheat_data[gidx] = cm
-        eta = get_eta(len(games), len(cheat_data), start)
-        print(f"eta: {eta}", end="\n" if generator.verbose else "\r", flush=True)
-    return cheat_data
+def process_game(args, game_data):
+    game, gidx = game_data
+    generator = CheatGenerator(
+        args.sfbin,
+        args.cp_mistake_thresh,
+        args.cp_loss_fraction,
+        args.stockfish_depth,
+        args.verbose,
+    )
+    cm = generator.process_game(game, gidx)
+    generator.close()
+    return cm, gidx
 
 
 if __name__ == "__main__":
@@ -168,14 +157,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     data = load_data(args.datadir)
     games = parse_mvids(data["test"], data["mvids"])
-    generator = CheatGenerator(
-        args.sfbin,
-        args.cp_mistake_thresh,
-        args.cp_loss_fraction,
-        args.stockfish_depth,
-        args.verbose,
-    )
-    cheat_data = process_games(generator, games)
+    fn = partial(process_game, args)
+    cheat_data = {}
+    start = time.time()
+    with Pool(processes=os.cpu_count() - 1) as pool:
+        for cd, gidx in pool.imap_unordered(fn, games):
+            cheat_data[gidx] = cd
+            print(f"eta: {get_eta(len(games), len(cheat_data), start)}", end="\r")
+
     np.save(
         os.path.join(args.datadir, "test_cheating.npy"),
         cheat_data,
@@ -187,5 +176,6 @@ if __name__ == "__main__":
                 "mistake_threshold": args.cp_mistake_thresh,
                 "stockfish_depth": args.stockfish_depth,
                 "cp_loss_fraction": args.cp_loss_fraction,
-            }
+            },
+            f,
         )
