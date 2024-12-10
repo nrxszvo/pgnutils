@@ -88,13 +88,12 @@ def uci_to_mvid(uci, white, black):
 
 
 def count_invalid(mvids, opening, tgts):
-    board, white, black = inf.board_state()
-    game = chess.pgn.Game()
-    node = game
+    board_state, white, black = inf.board_state()
+    board = chess.pgn.Game().board()
     nfail = 0
     for mvid in opening:
-        uci = mvid_to_uci(mvid, board, white, black)
-        node = node.add_variation(chess.Move.from_uci(uci))
+        uci = mvid_to_uci(mvid, board_state, white, black)
+        board.push(chess.Move.from_uci(uci))
 
     nmoves = len(mvids)
     for i, (mvid, tgt) in enumerate(zip(mvids, tgts)):
@@ -102,14 +101,14 @@ def count_invalid(mvids, opening, tgts):
             nmoves = i
             break
         try:
-            uci = mvid_to_uci(mvid, board, white, black, False)
-            if not node.board().is_legal(chess.Move.from_uci(uci)):
+            uci = mvid_to_uci(mvid, board_state, white, black, False)
+            if not board.is_legal(chess.Move.from_uci(uci)):
                 nfail += 1
         except chess.InvalidMoveError:
             nfail += 1
 
-        uci = mvid_to_uci(tgt, board, white, black)
-        node = node.add_variation(chess.Move.from_uci(uci))
+        uci = mvid_to_uci(tgt, board_state, white, black)
+        board.push(chess.Move.from_uci(uci))
 
     return nmoves, nfail
 

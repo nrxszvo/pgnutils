@@ -245,6 +245,8 @@ class MimicChessCoreModule(L.LightningModule):
         mask = F.one_hot(oh_tgt, nclass).permute(0, 2, 1)
         tprobs = (probs * mask).sum(dim=1)
 
+        cheatdata = batch["cheatdata"]
+        cheatdata[:, 2:] -= self.min_moves
         return {
             "sorted_tokens": stokens,
             "sorted_probs": sprobs,
@@ -253,6 +255,7 @@ class MimicChessCoreModule(L.LightningModule):
             "heads": batch["heads"],
             "opening": batch["opening"],
             "targets": tgt.unsqueeze(1),
+            "cheatdata": cheatdata,
         }
 
     def init_classifier(self, ckpt_fn):

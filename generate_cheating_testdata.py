@@ -157,14 +157,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     data = load_data(args.datadir)
     games = parse_mvids(data["test"], data["mvids"])
+    print(f'loaded {len(games)} games from test set')
     fn = partial(process_game, args)
     cheat_data = {}
     chunksize = len(games) // (os.cpu_count() - 1) // 10
+    print(f'using chunksize={chunksize}')
     start = time.time()
     with Pool(processes=os.cpu_count() - 1) as pool:
         for cd, gidx in pool.imap_unordered(fn, games, chunksize=chunksize):
             cheat_data[gidx] = cd
-            print(f"eta: {get_eta(len(games), len(cheat_data), start)}", end="\r")
+            print(f"processed {len(cheat_data)} of {len(games)}, eta: {get_eta(len(games), len(cheat_data), start)}", end="\r")
 
     np.save(
         os.path.join(args.datadir, "test_cheating.npy"),

@@ -15,15 +15,19 @@ def init_worker(seed):
 def collate_fn(batch):
     maxinp = 0
     maxtgt = 0
+    maxcd = 3
     openmoves = batch[0]["opening"].shape[0]
     for d in batch:
         inp = d["input"]
         tgt = d["w_target"]
         maxinp = max(maxinp, inp.shape[0])
         maxtgt = max(maxtgt, tgt.shape[0])
+        if "cheatdata" in d:
+            maxcd = max(maxcd, len(d["cheatdata"]))
 
     bs = len(batch)
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
+    cheatdata = -torch.ones((bs, maxcd), dtype=torch.int64)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
     wtargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     btargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
@@ -39,6 +43,9 @@ def collate_fn(batch):
         ni = inp.shape[0]
         nt = wtgt.shape[0]
         inputs[i, :ni] = torch.from_numpy(inp)
+        if "cheatdata" in d:
+            ncd = len(d["cheatdata"])
+            cheatdata[i, :ncd] = torch.from_numpy(d["cheatdata"])
         wtargets[i, :nt] = torch.from_numpy(wtgt)
         btargets[i, :nt] = torch.from_numpy(btgt)
         openings[i] = torch.from_numpy(d["opening"])
@@ -50,6 +57,7 @@ def collate_fn(batch):
 
     return {
         "input": inputs,
+        "cheatdata": cheatdata,
         "w_target": wtargets,
         "b_target": btargets,
         "opening": openings,
@@ -61,7 +69,13 @@ def collate_fn(batch):
 
 class MMCDataset(Dataset):
     def __init__(
-        self, seq_len, min_moves, indices, mvids, elos, elo_edges, train_head=False
+        self,
+        seq_len,
+        min_moves,
+        indices,
+        mvids,
+        elos,
+        elo_edges,
     ):
         super().__init__()
         self.seq_len = seq_len
@@ -71,7 +85,6 @@ class MMCDataset(Dataset):
         self.mvids = mvids
         self.elos = elos
         self.elo_edges = elo_edges
-        self.train_head = train_head
 
     def __len__(self):
         return self.nsamp
@@ -113,7 +126,87 @@ class MMCDataset(Dataset):
         }
 
 
-def load_data(dirname):
+class MMCCheatingDataset(Dataset):
+    def __init__(self, seq_len, min_moves, indices, cheatdata, mvids, elos, elo_edges):
+        super().__init__()
+        self.seq_len = seq_len
+        self.min_moves = min_moves
+        flat = []
+        for i, (_, nmoves, gidx) in enumerate(indices):
+            cd = [
+                d
+                for d in cheatdata[gidx]
+                if d[0] >= min_moves and d[0] < min(seq_len, nmoves - 1)
+            ]
+            offsets = [d[0] for d in cd]
+            flat.append(
+                (
+                    i,
+                    offsets,
+                    -1,
+                )
+            )
+            for offset, cheat_mvid, _, _ in cd:
+                flat.append((i, [offset], cheat_mvid))
+        self.nsamp = len(flat)
+        self.indices = indices
+        self.cheatdata = flat
+        self.mvids = mvids
+        self.elos = elos
+        self.elo_edges = elo_edges
+
+    def __len__(self):
+        return self.nsamp
+
+    def _get_head(self, elo):
+        for i, edge in enumerate(self.elo_edges):
+            if elo <= edge:
+                return i
+
+    def __getitem__(self, idx):
+        ii, offsets, cheat_mvid = self.cheatdata[idx]
+        gs, nmoves, gidx = self.indices[ii]
+        welo, belo = self.elos[gidx]
+        n_inp = min(self.seq_len, nmoves - 1)
+        inp = np.empty(n_inp, dtype="int32")
+        inp[:] = self.mvids[gs : gs + n_inp]
+
+        opening = np.empty(self.min_moves, dtype="int64")
+        opening[:] = self.mvids[gs : gs + self.min_moves]
+
+        w_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
+        b_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
+        w_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
+        b_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
+        w_tgt[1::2] = NOOP
+        b_tgt[::2] = NOOP
+
+        w_head = self._get_head(welo)
+        b_head = self._get_head(belo)
+
+        cheatdata = [cheat_mvid, gidx] + offsets
+        if cheat_mvid != -1:
+            offset = offsets[0]
+            inp[offset] = cheat_mvid
+            if offset % 2 == 0:
+                w_tgt[offset - self.min_moves] = cheat_mvid
+            else:
+                b_tgt[offset - self.min_moves] = cheat_mvid
+
+        return {
+            "input": inp,
+            "w_target": w_tgt,
+            "b_target": b_tgt,
+            "opening": opening,
+            "w_head": w_head,
+            "b_head": b_head,
+            "nhead": len(self.elo_edges),
+            "n_inp": n_inp,
+            "cheatdata": np.array(cheatdata),
+        }
+
+
+def load_data(dirname, load_cheatdata=False):
     md = np.load(os.path.join(dirname, "md.npy"), allow_pickle=True).item()
     with open(f"{dirname}/fmd.json") as f:
         fmd = json.load(f)
@@ -121,7 +214,7 @@ def load_data(dirname):
     # we subtract one here so that it now represents the minimum number of moves that the
     # model must see before making its first prediction
     fmd["min_moves"] -= 1
-    return {
+    data = {
         "md": md,
         "fmd": fmd,
         "mvids": np.memmap(
@@ -155,6 +248,11 @@ def load_data(dirname):
             shape=tuple(fmd["test_shape"]),
         ),
     }
+    if load_cheatdata:
+        data["cheatdata"] = np.load(
+            os.path.join(dirname, "cheatdata.npy"), allow_pickle=True
+        ).item()
+    return data
 
 
 class MMCDataModule(L.LightningDataModule):
@@ -165,15 +263,17 @@ class MMCDataModule(L.LightningDataModule):
         max_seq_len,
         batch_size,
         num_workers,
+        load_cheatdata=False,
     ):
         super().__init__()
         self.max_seq_len = max_seq_len
         self.batch_size = batch_size
-        self.num_workers = num_workers
+        self.num_workers = 0  # num_workers
         self.elo_edges = elo_edges
         if len(self.elo_edges) == 0 or self.elo_edges[-1] < float("inf"):
             self.elo_edges.append(float("inf"))
-        self.__dict__.update(load_data(datadir))
+        self.load_cheatdata = load_cheatdata
+        self.__dict__.update(load_data(datadir, load_cheatdata))
         self.min_moves = self.fmd["min_moves"]
 
     def setup(self, stage):
@@ -205,14 +305,25 @@ class MMCDataModule(L.LightningDataModule):
             )
 
         if stage in ["test", "predict"]:
-            self.testset = MMCDataset(
-                self.max_seq_len,
-                self.fmd["min_moves"],
-                self.test,
-                self.mvids,
-                self.elos,
-                self.elo_edges,
-            )
+            if self.load_cheatdata:
+                self.testset = MMCCheatingDataset(
+                    self.max_seq_len,
+                    self.fmd["min_moves"],
+                    self.test,
+                    self.cheatdata,
+                    self.mvids,
+                    self.elos,
+                    self.elo_edges,
+                )
+            else:
+                self.testset = MMCDataset(
+                    self.max_seq_len,
+                    self.fmd["min_moves"],
+                    self.test,
+                    self.mvids,
+                    self.elos,
+                    self.elo_edges,
+                )
 
     def train_dataloader(self):
         return DataLoader(
