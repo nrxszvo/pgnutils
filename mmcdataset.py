@@ -27,7 +27,7 @@ def collate_fn(batch):
 
     bs = len(batch)
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
-    cheatdata = -torch.ones((bs, maxcd), dtype=torch.int64)
+    cheatdata = -torch.ones((bs, maxcd, 2), dtype=torch.int64)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
     wtargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     btargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
@@ -45,7 +45,8 @@ def collate_fn(batch):
         inputs[i, :ni] = torch.from_numpy(inp)
         if "cheatdata" in d:
             ncd = len(d["cheatdata"])
-            cheatdata[i, :ncd] = torch.from_numpy(d["cheatdata"])
+            if ncd > 0:
+                cheatdata[i, :ncd] = torch.from_numpy(d["cheatdata"])
         wtargets[i, :nt] = torch.from_numpy(wtgt)
         btargets[i, :nt] = torch.from_numpy(btgt)
         openings[i] = torch.from_numpy(d["opening"])
@@ -131,26 +132,16 @@ class MMCCheatingDataset(Dataset):
         super().__init__()
         self.seq_len = seq_len
         self.min_moves = min_moves
-        flat = []
-        for i, (_, nmoves, gidx) in enumerate(indices):
-            cd = [
-                d
-                for d in cheatdata[gidx]
-                if d[0] >= min_moves and d[0] < min(seq_len, nmoves - 1)
-            ]
-            offsets = [d[0] for d in cd]
-            flat.append(
-                (
-                    i,
-                    offsets,
-                    -1,
-                )
-            )
-            for offset, cheat_mvid, _, _ in cd:
-                flat.append((i, [offset], cheat_mvid))
-        self.nsamp = len(flat)
+        self.nsamp = len(indices)
         self.indices = indices
-        self.cheatdata = flat
+        self.cheatdata = {}
+        for _, nmoves, gidx in indices:
+            cd = cheatdata[gidx]
+            filtered = []
+            for offset, cheat_mvid, _, _ in cd:
+                if offset >= min_moves and offset <= min(seq_len, nmoves - 1):
+                    filtered.append([offset - min_moves, cheat_mvid])
+            self.cheatdata[gidx] = np.array(filtered)
         self.mvids = mvids
         self.elos = elos
         self.elo_edges = elo_edges
@@ -164,8 +155,7 @@ class MMCCheatingDataset(Dataset):
                 return i
 
     def __getitem__(self, idx):
-        ii, offsets, cheat_mvid = self.cheatdata[idx]
-        gs, nmoves, gidx = self.indices[ii]
+        gs, nmoves, gidx = self.indices[idx]
         welo, belo = self.elos[gidx]
         n_inp = min(self.seq_len, nmoves - 1)
         inp = np.empty(n_inp, dtype="int32")
@@ -184,14 +174,7 @@ class MMCCheatingDataset(Dataset):
         w_head = self._get_head(welo)
         b_head = self._get_head(belo)
 
-        cheatdata = [cheat_mvid, gidx] + offsets
-        if cheat_mvid != -1:
-            offset = offsets[0]
-            inp[offset] = cheat_mvid
-            if offset % 2 == 0:
-                w_tgt[offset - self.min_moves] = cheat_mvid
-            else:
-                b_tgt[offset - self.min_moves] = cheat_mvid
+        cd = self.cheatdata[gidx]
 
         return {
             "input": inp,
@@ -202,7 +185,7 @@ class MMCCheatingDataset(Dataset):
             "b_head": b_head,
             "nhead": len(self.elo_edges),
             "n_inp": n_inp,
-            "cheatdata": np.array(cheatdata),
+            "cheatdata": cd,
         }
 
 

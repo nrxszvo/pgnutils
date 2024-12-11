@@ -130,26 +130,17 @@ class MoveStats:
 
 class CheatStats:
     def __init__(self):
-        self.stats = defaultdict(
-            lambda: defaultdict(lambda: {"model": 0, "stockfish": 0})
-        )
+        self.num = 0
+        self.den = 0
 
-    def eval(self, head_probs, cheatdata):
-        for p, cd in zip(head_probs, cheatdata):
-            mvid = cd[0].item()
-            gidx = cd[1].item()
-            if mvid == -1:
-                for ofst in [o.item() for o in cd[2:] if o != -1]:
-                    self.stats[gidx][ofst]["model"] = p[ofst].item()
-            else:
-                ofst = cd[2].item()
-                self.stats[gidx][ofst]["stockfish"] = p[ofst].item()
+    def eval(self, head_probs, cheat_probs, cheatdata):
+        for tps, cps, cd in zip(head_probs, cheat_probs, cheatdata):
+            for i, cp in enumerate(cps):
+                offset = cd[i, 0]
+                tp = tps[offset]
+                if cp < tp:
+                    self.num += cp / tp
+                    self.den += 1
 
     def report(self):
-        ratios = []
-        breakpoint()
-        for gidx, gstats in self.stats.items():
-            for ofst, stats in gstats.items():
-                ratios.append(stats["stockfish"] / stats["model"])
-        mean = np.mean(ratios)
-        print(f"Mean ratio of stockfish to model probability: {mean:.4f}")
+        print(f"Mean ratio of stockfish to model probability: {self.num/self.den:.4f}")

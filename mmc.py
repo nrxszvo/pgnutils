@@ -15,6 +15,7 @@ from torch.optim.lr_scheduler import (
 )
 
 from model import ModelArgs, Transformer, EloClassifier
+from utils import select_heads
 
 
 @dataclass
@@ -244,9 +245,18 @@ class MimicChessCoreModule(L.LightningModule):
         oh_tgt = tgt[:, None].repeat(1, nheads, 1).reshape(-1, seqlen)
         mask = F.one_hot(oh_tgt, nclass).permute(0, 2, 1)
         tprobs = (probs * mask).sum(dim=1)
-
         cheatdata = batch["cheatdata"]
-        cheatdata[:, 2:] -= self.min_moves
+        head_probs = select_heads(probs, batch["offset_heads"])
+        cheat_probs = []
+        for i, cd in enumerate(cheatdata):
+            idx = (cd[:, 0] != -1).nonzero()[:, 0]
+            cps = []
+            if len(idx) > 0:
+                seq_probs = torch.index_select(head_probs[i], 1, cd[idx, 0])
+                for j, offset in enumerate(cd[idx, 1]):
+                    cps.append(seq_probs[offset, j])
+            cheat_probs.append(torch.Tensor(cps))
+
         return {
             "sorted_tokens": stokens,
             "sorted_probs": sprobs,
@@ -255,6 +265,7 @@ class MimicChessCoreModule(L.LightningModule):
             "heads": batch["heads"],
             "opening": batch["opening"],
             "targets": tgt.unsqueeze(1),
+            "cheat_probs": cheat_probs,
             "cheatdata": cheatdata,
         }
 

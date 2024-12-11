@@ -43,8 +43,7 @@ def evaluate(outputs, elo_edges, n_heads):
             head_tokens = select_heads(d["sorted_tokens"], d["offset_heads"])[idx]
             moveStats.eval(head_tokens, d["heads"][idx], d["targets"][idx])
             gameStats.eval(head_tokens, d["opening"][idx], d["targets"][idx])
-
-            rand_tokens = rand_select_heads(d["sorted_tokens"][idx], len(idx))
+            rand_tokens = rand_select_heads(d["sorted_tokens"], bs)[idx]
             randStats.eval(rand_tokens, d["heads"][idx], d["targets"][idx])
 
             headStats.eval(
@@ -52,7 +51,7 @@ def evaluate(outputs, elo_edges, n_heads):
             )
 
         head_probs = select_heads(d["target_probs"], d["offset_heads"])
-        cheatStats.eval(head_probs, d["cheatdata"])
+        cheatStats.eval(head_probs, d["cheat_probs"], d['cheatdata'])
 
     print()
     gameStats.report()
