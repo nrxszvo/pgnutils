@@ -96,6 +96,8 @@ class CheatGenerator:
             if idx >= 2 and self._is_miss(scores[-3:], idx):
                 miss = True
                 gain, cp_loss = get_gain_and_cp_loss(scores[-3:], idx)
+                if cp_loss > 2000:
+                    breakpoint()
                 cheat_mvid = uci_to_mvid(prev_best.uci(), white, black)
                 cheat_moves.append([idx, cheat_mvid, gain, cp_loss])
 
@@ -154,19 +156,34 @@ if __name__ == "__main__":
     parser.add_argument(
         "--verbose", action="store_true", default=False, help="verbose printing"
     )
+    parser.add_argument(
+        "--serial",
+        action="store_true",
+        default=False,
+        help="run in serial (non-parallel) mode for debugging",
+    )
+
     args = parser.parse_args()
     data = load_data(args.datadir)
     games = parse_mvids(data["test"], data["mvids"])
-    print(f'loaded {len(games)} games from test set')
+    print(f"loaded {len(games)} games from test set")
     fn = partial(process_game, args)
     cheat_data = {}
-    chunksize = len(games) // (os.cpu_count() - 1) // 10
-    print(f'using chunksize={chunksize}')
-    start = time.time()
-    with Pool(processes=os.cpu_count() - 1) as pool:
-        for cd, gidx in pool.imap_unordered(fn, games, chunksize=chunksize):
-            cheat_data[gidx] = cd
-            print(f"processed {len(cheat_data)} of {len(games)}, eta: {get_eta(len(games), len(cheat_data), start)}", end="\r")
+
+    if args.serial:
+        for cd, gidx in games:
+            cheat_data[gidx] = process_game(args, (cd, gidx))
+    else:
+        chunksize = len(games) // (os.cpu_count() - 1) // 10
+        print(f"using chunksize={chunksize}")
+        start = time.time()
+        with Pool(processes=os.cpu_count() - 1) as pool:
+            for cd, gidx in pool.imap_unordered(fn, games, chunksize=chunksize):
+                cheat_data[gidx] = cd
+                print(
+                    f"processed {len(cheat_data)} of {len(games)}, eta: {get_eta(len(games), len(cheat_data), start)}",
+                    end="\r",
+                )
 
     np.save(
         os.path.join(args.datadir, "test_cheating.npy"),
