@@ -51,7 +51,7 @@ def evaluate(outputs, elo_edges, n_heads):
             )
 
         head_probs = select_heads(d["target_probs"], d["offset_heads"])
-        cheatStats.eval(head_probs, d["cheat_probs"], d['cheatdata'])
+        cheatStats.eval(head_probs, d["cheat_probs"], d["cheatdata"])
 
     print()
     gameStats.report()
