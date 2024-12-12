@@ -29,20 +29,22 @@ def collect_remaining(list_fn, npy_dir):
     to_proc = []
     with open(list_fn) as f:
         for line in f:
-            npyname = re.match(".+standard_rated_([0-9\-]+)\.pgn\.zst", line).group(1)
+            npyname = re.match(r".+standard_rated_([0-9\-]+)\.pgn\.zst", line).group(1)
             if npyname not in existing:
                 to_proc.append((line.rstrip(), npyname))
     return to_proc
 
 
 def parse_url(url):
-    m = re.match(".*(lichess_db.*pgn\.zst)", url)
+    m = re.match(r".*(lichess_db.*pgn\.zst)", url)
     zst = m.group(1)
     pgn_fn = zst[:-4]
     return zst, pgn_fn
 
 
 def download_proc(pid, url_q, zst_q, print_safe):
+    added = 0
+    completed = 0
     while True:
         url, npyname = url_q.get()
         if url == "DONE":
@@ -51,7 +53,7 @@ def download_proc(pid, url_q, zst_q, print_safe):
         zst, _ = parse_url(url)
         if not os.path.exists(zst):
             if not os.path.exists(zst):
-                while zst_q.qsize() > 2:
+                while added - completed > 2:
                     print_safe(f"download proc {pid} is sleeping...")
                     time.sleep(5 * 60)
                 print_safe(f"{npyname}: downloading...")
@@ -59,6 +61,8 @@ def download_proc(pid, url_q, zst_q, print_safe):
                     lambda: wget.download(url, bar=lambda a, b, c: None)
                 )
                 print_safe(f"{npyname}: finished downloading in {time_str}")
+                completed += 1
+        added += 1
         zst_q.put((npyname, zst))
 
 
@@ -190,7 +194,7 @@ def main(
                 print(e)
                 dl_p.kill()
         for fn in os.listdir("."):
-            if re.match("lichess_db_standard_rated.*\.zst.*\.tmp", fn):
+            if re.match(r"lichess_db_standard_rated.*\.zst.*\.tmp", fn):
                 os.remove(fn)
 
 

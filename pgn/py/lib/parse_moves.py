@@ -3,7 +3,7 @@ import re
 import builtins
 
 MV_PAT = "O-O-O|O-O|[a-hRNBQK]+[0-9=x]*[a-hRNBQK]*[0-9]*[=RNBQ]*"
-CLK_PAT = "\{.*\[%clk ([0-9:]+)\].*\}"
+CLK_PAT = r"\{.*\[%clk ([0-9:]+)\].*\}"
 
 
 def moveno_str(moveno):
@@ -18,11 +18,11 @@ def match_next_move(move_str, idx, curmv):
 
     builtins.prof.start("regex")
     m = re.match(
-        f"{curmv}\..* ({MV_PAT}).*{CLK_PAT}.* ({MV_PAT}).*{CLK_PAT}",
+        rf"{curmv}\..* ({MV_PAT}).*{CLK_PAT}.* ({MV_PAT}).*{CLK_PAT}",
         move_str[mvstart:idx],
     )
     if m is None:
-        m = re.match(f"{curmv}\..* ({MV_PAT}).*{CLK_PAT}", move_str[mvstart:idx])
+        m = re.match(rf"{curmv}\..* ({MV_PAT}).*{CLK_PAT}", move_str[mvstart:idx])
     builtins.prof.stop("regex")
     return idx, m
 
@@ -99,14 +99,14 @@ def process_raw_line(line, state):
             elif line[:9] == "[BlackElo":
                 state["belo"] = line
             elif line[:12] == "[TimeControl":
-                m = re.match('\[TimeControl "([0-9]+)\+*([0-9]+)"\]', line)
+                m = re.match(r'\[TimeControl "([0-9]+)\+*([0-9]+)"\]', line)
                 if m is not None:
                     tim = int(m.group(1))
                     inc = 0 if len(m.groups()) == 1 else int(m.group(2))
                     if inc == 0 and tim <= 1200 and tim >= 600:
                         state["time"] = tim
             elif line[:12] == "[Termination":
-                m = re.match('\[Termination "(.+)"\]', line)
+                m = re.match(r'\[Termination "(.+)"\]', line)
                 for tp in TERM_PATS:
                     if tp in m.group(1):
                         state["valid_term"] = True
@@ -118,8 +118,8 @@ def process_raw_line(line, state):
                 and state["welo"] is not None
                 and state["belo"] is not None
             ):
-                mw = re.match('\[WhiteElo "([0-9]+)"\]', state["welo"])
-                mb = re.match('\[BlackElo "([0-9]+)"\]', state["belo"])
+                mw = re.match(r'\[WhiteElo "([0-9]+)"\]', state["welo"])
+                mb = re.match(r'\[BlackElo "([0-9]+)"\]', state["belo"])
                 if mw and mb:
                     state["welo"] = int(mw.group(1))
                     state["belo"] = int(mb.group(1))
