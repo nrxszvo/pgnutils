@@ -251,7 +251,7 @@ class MMCDataModule(L.LightningDataModule):
         super().__init__()
         self.max_seq_len = max_seq_len
         self.batch_size = batch_size
-        self.num_workers = 0  # num_workers
+        self.num_workers = num_workers
         self.elo_edges = elo_edges
         if len(self.elo_edges) == 0 or self.elo_edges[-1] < float("inf"):
             self.elo_edges.append(float("inf"))

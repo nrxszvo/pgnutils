@@ -7,9 +7,9 @@ import tempfile
 import time
 
 import wget
-from multiprocessing import Queue, Process, Lock
+from multiprocessing import Queue, Process
 
-from py.lib import timeit, DataWriter
+from py.lib import timeit, DataWriter, PrintSafe
 
 
 def collect_existing_npy(npy_dir):
@@ -40,18 +40,6 @@ def parse_url(url):
     zst = m.group(1)
     pgn_fn = zst[:-4]
     return zst, pgn_fn
-
-
-class PrintSafe:
-    def __init__(self):
-        self.lock = Lock()
-
-    def __call__(self, string, end="\n"):
-        self.lock.acquire()
-        try:
-            print(string, end=end)
-        finally:
-            self.lock.release()
 
 
 def download_proc(pid, url_q, zst_q, print_safe):

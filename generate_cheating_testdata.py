@@ -1,8 +1,7 @@
 import argparse
 import json
 import os
-from multiprocessing import Pool
-from functools import partial
+from multiprocessing import Process, Queue
 import time
 
 import chess
@@ -10,8 +9,7 @@ import numpy as np
 
 import pgn.py.lib.inference as inf
 from mmcdataset import load_data
-from pgn.py.lib.reconstruct import mvid_to_uci, uci_to_mvid
-from pgn.py.lib import get_eta
+from pgn.py.lib import get_eta, PrintSafe, mvid_to_uci, uci_to_mvid
 
 
 def get_gain_and_cp_loss(scores, idx):
@@ -25,16 +23,25 @@ def get_gain_and_cp_loss(scores, idx):
 
 
 class CheatGenerator:
-    def __init__(self, sfbin, mistake_thresh, cp_loss_frac, depth_limit, verbose):
+    def __init__(
+        self,
+        sfbin,
+        mistake_thresh,
+        cp_loss_frac,
+        depth_limit,
+        verbose,
+        print_safe,
+    ):
         self.engine = chess.engine.SimpleEngine.popen_uci(sfbin)
         self.thresh = mistake_thresh
         self.lf = cp_loss_frac
         self.dl = depth_limit
         self.verbose = verbose
         if self.verbose:
-            self.printfn = print
+            self.printfn = print_safe
         else:
             self.printfn = lambda a=None, b=None, c=None: None
+        self.print_dbg = print_safe
 
     def close(self):
         self.engine.quit()
@@ -97,7 +104,7 @@ class CheatGenerator:
                 miss = True
                 gain, cp_loss = get_gain_and_cp_loss(scores[-3:], idx)
                 if cp_loss > 2000:
-                    breakpoint()
+                    self.print_dbg(f"game {gid} had cp_loss={cp_loss}")
                 cheat_mvid = uci_to_mvid(prev_best.uci(), white, black)
                 cheat_moves.append([idx, cheat_mvid, gain, cp_loss])
 
@@ -109,14 +116,21 @@ class CheatGenerator:
         return np.array(cheat_moves)
 
 
-def parse_mvids(indices, mvids):
+def load_games(indices, mvids):
     games = []
     for gs, nmoves, gidx in indices:
         games.append((mvids[gs : gs + nmoves], gidx))
     return games
 
 
-def process_game(args, game_data):
+def load_games_queue(games_q, indices, mvids, nproc):
+    for gs, nmoves, gidx in indices:
+        games_q.put((mvids[gs : gs + nmoves], gidx))
+    for _ in range(nproc):
+        games_q.put((None, -1))
+
+
+def process_game_serial(args, game_data):
     game, gidx = game_data
     generator = CheatGenerator(
         args.sfbin,
@@ -128,6 +142,37 @@ def process_game(args, game_data):
     cm = generator.process_game(game, gidx)
     generator.close()
     return cm, gidx
+
+
+def process_games(pid, args, games_q, output_q, print_safe):
+    generator = CheatGenerator(
+        args.sfbin,
+        args.cp_mistake_thresh,
+        args.cp_loss_fraction,
+        args.stockfish_depth,
+        args.verbose,
+        print_safe,
+    )
+    while True:
+        game, gidx = games_q.get()
+        if gidx == -1:
+            break
+        cm = generator.process_game(game, gidx)
+        output_q.put((cm, gidx))
+
+    generator.close()
+
+
+def start_processes(sf_args, games_q, output_q, print_safe, nproc):
+    procs = []
+    for pid in range(nproc):
+        p = Process(
+            target=process_games, args=((pid, sf_args, games_q, output_q, print_safe))
+        )
+        p.daemon = True
+        p.start()
+        procs.append(p)
+    return procs
 
 
 if __name__ == "__main__":
@@ -162,35 +207,58 @@ if __name__ == "__main__":
         default=False,
         help="run in serial (non-parallel) mode for debugging",
     )
+    parser.add_argument(
+        "--nproc",
+        default=os.cpu_count() - 1,
+        help="number of parallel stockfishes",
+        type=int,
+    )
+    parser.add_argument(
+        "--outfn", default="cheatdata.npy", help="name of output npy file"
+    )
 
     args = parser.parse_args()
     data = load_data(args.datadir)
-    games = parse_mvids(data["test"], data["mvids"])
-    print(f"loaded {len(games)} games from test set")
-    fn = partial(process_game, args)
+    ngames = len(data["test"])
     cheat_data = {}
 
     if args.serial:
+        games = load_games(data["test"], data["mvids"])
         for cd, gidx in games:
-            cheat_data[gidx] = process_game(args, (cd, gidx))
+            cheat_data[gidx] = process_game_serial(args, (cd, gidx))
     else:
-        chunksize = len(games) // (os.cpu_count() - 1) // 10
-        print(f"using chunksize={chunksize}")
+        games_q = Queue()
+        output_q = Queue()
+        print_safe = PrintSafe()
+
         start = time.time()
-        with Pool(processes=os.cpu_count() - 1) as pool:
-            for cd, gidx in pool.imap_unordered(fn, games, chunksize=chunksize):
-                cheat_data[gidx] = cd
-                print(
-                    f"processed {len(cheat_data)} of {len(games)}, eta: {get_eta(len(games), len(cheat_data), start)}",
-                    end="\r",
+        load_games_queue(games_q, data["test"], data["mvids"], args.nproc)
+        procs = start_processes(args, games_q, output_q, print_safe, args.nproc)
+        while True:
+            cm, gidx = output_q.get()
+            cheat_data[gidx] = cm
+            if len(cheat_data) == ngames:
+                break
+
+            if len(cheat_data) % args.nproc == 0:
+                eta = get_eta(ngames, len(cheat_data), start)
+                print_safe(
+                    f"Processed {len(cheat_data)} of {ngames} games (eta: {eta})"
                 )
+            else:
+                print_safe(f"Processed {len(cheat_data)} of {ngames} games", end="\r")
+
+        for p in procs:
+            p.join()
 
     np.save(
-        os.path.join(args.datadir, "test_cheating.npy"),
+        os.path.join(args.datadir, args.outfn),
         cheat_data,
         allow_pickle=True,
     )
-    with open(os.path.join(args.datadir, "cheat_md.json"), "w") as f:
+    with open(
+        os.path.join(args.datadir, f"{os.path.basename(args.outfn)}.md.json"), "w"
+    ) as f:
         json.dump(
             {
                 "cp_mistake_threshold": args.cp_mistake_thresh,

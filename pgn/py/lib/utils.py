@@ -1,5 +1,18 @@
 import time
 import datetime
+from multiprocessing import Lock
+
+
+class PrintSafe:
+    def __init__(self):
+        self.lock = Lock()
+
+    def __call__(self, string, end="\n"):
+        self.lock.acquire()
+        try:
+            print(string, end=end)
+        finally:
+            self.lock.release()
 
 
 def timeit(fn):

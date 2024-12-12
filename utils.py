@@ -1,5 +1,3 @@
-from collections import defaultdict
-import numpy as np
 import torch
 from pgn.py.lib.reconstruct import count_invalid
 from mmcdataset import NOOP
@@ -129,18 +127,38 @@ class MoveStats:
 
 
 class CheatStats:
-    def __init__(self):
-        self.num = 0
-        self.den = 0
+    class EloStats:
+        def __init__(self, elo):
+            self.elo = elo
+            self.below = [0, 0]
+            self.above = [0, 0]
 
-    def eval(self, head_probs, cheat_probs, cheatdata):
-        for tps, cps, cd in zip(head_probs, cheat_probs, cheatdata):
+    def __init__(self, elo_edges):
+        self.stats = [CheatStats.EloStats(elo) for elo in elo_edges]
+
+    def eval(self, head_probs, cheat_probs, cheatdata, heads):
+        for tps, cps, cd, hs in zip(head_probs, cheat_probs, cheatdata, heads):
             for i, cp in enumerate(cps):
                 offset = cd[i, 0]
                 tp = tps[offset]
+                head = hs[0] if offset % 2 == 0 else hs[1]
+                stats = self.stats[head]
                 if cp < tp:
-                    self.num += cp / tp
-                    self.den += 1
+                    stats.below[0] += cp / tp
+                    stats.below[1] += 1
+                else:
+                    stats.above[0] += cp / tp
+                    stats.above[1] += 1
 
     def report(self):
-        print(f"Mean ratio of stockfish to model probability: {self.num/self.den:.4f}")
+        print("Stockfish / Model probability ratios:")
+        for stats in self.stats:
+            print(f"Elo < {stats.elo}")
+            if stats.below[1] > 0:
+                print(
+                    f"Mean ratio when stockfish < model: {stats.below[0]/stats.below[1]:.4f} ({stats.below[1]} total moves)"
+                )
+            if stats.above[1] > 0:
+                print(
+                    f"Mean ratio when stockfish > model: {stats.above[0]/stats.above[1]:.4f} ({stats.above[1]} total moves)"
+                )

@@ -30,7 +30,7 @@ def evaluate(outputs, elo_edges, n_heads):
     headStats = HeadStats(n_heads, bs)
     moveStats = MoveStats(elo_edges)
     randStats = MoveStats(elo_edges)
-    cheatStats = CheatStats()
+    cheatStats = CheatStats(elo_edges)
     nbatch = len(outputs)
 
     for i, d in enumerate(outputs):
@@ -51,7 +51,7 @@ def evaluate(outputs, elo_edges, n_heads):
             )
 
         head_probs = select_heads(d["target_probs"], d["offset_heads"])
-        cheatStats.eval(head_probs, d["cheat_probs"], d["cheatdata"])
+        cheatStats.eval(head_probs, d["cheat_probs"], d["cheatdata"], d["heads"])
 
     print()
     gameStats.report()
