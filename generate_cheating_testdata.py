@@ -65,7 +65,10 @@ class CheatGenerator:
             val = score.relative.score()
             if not score.turn:
                 val = -val
-            val = min(val, maxval)
+            if val < 0:
+                val = max(val, -maxval)
+            else:
+                val = min(val, maxval)
         return val, info["pv"][0] if "pv" in info else None
 
     def _print_if_verbose(self, idx, score, miss):
@@ -98,7 +101,6 @@ class CheatGenerator:
             board.push(mv)
             score, best_mv = self._get_score(board)
             scores.append(score)
-
             miss = False
             if idx >= 2 and self._is_miss(scores[-3:], idx):
                 miss = True
@@ -138,6 +140,7 @@ def process_game_serial(args, game_data):
         args.cp_loss_fraction,
         args.stockfish_depth,
         args.verbose,
+        print,
     )
     cm = generator.process_game(game, gidx)
     generator.close()
