@@ -73,5 +73,5 @@ fi
 
 echo "set -g mouse on" > ${HOME}/.tmux.conf
 
-sudo apt-get install -y stockfish
+sudo apt-get install -y stockfish libzstd-dev
 
