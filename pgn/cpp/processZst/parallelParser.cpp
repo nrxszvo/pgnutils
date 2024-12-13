@@ -2,7 +2,7 @@
 #include "lib/decompress.h"
 #include "lib/parseMoves.h"
 #include "lib/validate.h"
-#include "lib/utils.h"
+#include "utils/utils.h"
 #include <stdexcept>
 #include <chrono>
 #include <iostream>

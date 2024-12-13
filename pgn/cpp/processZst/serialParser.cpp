@@ -1,7 +1,7 @@
 #include "lib/parseMoves.h"
 #include "lib/decompress.h"
 #include "lib/validate.h"
-#include "lib/utils.h"
+#include "utils/utils.h"
 #include "profiling/profiler.h"
 #include "serialParser.h"
 #include <filesystem>

@@ -7,7 +7,7 @@
 #include "lib/parseMoves.h"
 #include "lib/validate.h"
 #include "profiling/profiler.h"
-#include "lib/utils.h"
+#include "utils/utils.h"
 #include "lib/decompress.h"
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
