@@ -151,14 +151,14 @@ class CheatStats:
                     stats.above[1] += 1
 
     def report(self):
-        print("Stockfish / Model probability ratios:")
+        print("Stockfish / Target mean probability ratios:")
         for stats in self.stats:
-            print(f"Elo < {stats.elo}")
+            print(f"\tElo < {stats.elo}")
             if stats.below[1] > 0:
                 print(
-                    f"Mean ratio when stockfish < model: {stats.below[0]/stats.below[1]:.4f} ({stats.below[1]} total moves)"
+                    f"\t\tstockfish < target: {stats.below[0]/stats.below[1]:.4f} ({stats.below[1]} total moves)"
                 )
             if stats.above[1] > 0:
                 print(
-                    f"Mean ratio when stockfish > model: {stats.above[0]/stats.above[1]:.4f} ({stats.above[1]} total moves)"
+                    f"\t\tstockfish > target: {stats.above[0]/stats.above[1]:.4f} ({stats.above[1]} total moves)"
                 )
