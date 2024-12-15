@@ -31,6 +31,7 @@ if [ ! -d "${HOME}/git/mimicChess" ]; then
 	cd mimicChess
 	if [ ! -e "datasets" ]; then
 		ln -s ${HOME}/mimicChessData/datasets .
+		ln -s ${HOME}/mimicChessTexas/models .
 	fi
 	if [ -z ${MYNAME+x} ]; then
 		echo "git name and email not specified; skipping git config"
@@ -38,7 +39,6 @@ if [ ! -d "${HOME}/git/mimicChess" ]; then
 		git config --global user.name ${MYNAME} 
 		git config --global user.email ${MYEMAIL} 
 	fi
-	#git remote set-url origin "https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git"
 	cd ${HOME} 
 fi
 

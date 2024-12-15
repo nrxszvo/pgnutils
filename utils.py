@@ -41,8 +41,8 @@ class LegalGameStats:
                 self.nvalid_games += 1
 
     def report(self):
-        print(f"Legal game frequency: {100*self.nvalid_games/self.ntotal_games:.1f}%")
-        print(f"Legal move frequency: {100*self.nvalid_moves/self.ntotal_moves:.1f}%")
+        print(f"Legal game frequency: {100*self.nvalid_games/self.ntotal_games:.4f}%")
+        print(f"Legal move frequency: {100*self.nvalid_moves/self.ntotal_moves:.4f}%")
 
 
 class HeadStats:
