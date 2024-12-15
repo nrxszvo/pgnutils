@@ -30,7 +30,8 @@ if [ ! -d "${HOME}/git/mimicChess" ]; then
 	git clone "https://${GHTOKEN}@github.com/nrxszvo/mimicChess.git"
 	cd mimicChess
 	if [ ! -e "datasets" ]; then
-		ln -s ${HOME}/mimicChessData/datasets .
+		datadir=$(ls ~ | grep mimicChess)
+		ln -s ${HOME}/${datadir}/datasets .
 	fi
 	if [ -z ${MYNAME+x} ]; then
 		echo "git name and email not specified; skipping git config"
