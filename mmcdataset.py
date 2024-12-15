@@ -69,6 +69,11 @@ def collate_fn(batch):
 
 
 class MMCDataset(Dataset):
+    WELO_ONLY = 0
+    BELO_ONLY = 1
+    BOTH = 2
+    NEITHER = -1
+
     def __init__(
         self,
         seq_len,
@@ -77,12 +82,39 @@ class MMCDataset(Dataset):
         mvids,
         elos,
         elo_edges,
+        elo_range=None,
     ):
         super().__init__()
         self.seq_len = seq_len
         self.min_moves = min_moves
-        self.nsamp = len(indices)
-        self.indices = indices
+        if elo_range is not None:
+            lo, hi = elo_range
+
+            def get_cat(welo, belo):
+                def in_rng(elo):
+                    return (lo <= elo) and (elo <= hi)
+
+                if in_rng(welo) and in_rng(belo):
+                    return MMCDataset.BOTH
+                elif in_rng(welo):
+                    return MMCDataset.WELO_ONLY
+                elif in_rng(belo):
+                    return MMCDataset.BELO_ONLY
+                else:
+                    return MMCDataset.NEITHER
+
+            filtered = []
+            for md in indices:
+                _, _, gidx = md
+                welo, belo = elos[gidx]
+                cat = get_cat(welo, belo)
+                if cat != MMCDataset.NEITHER:
+                    filtered.append(md.tolist() + [cat])
+        else:
+            filtered = [md.tolist() + [MMCDataset.BOTH] for md in indices]
+
+        self.indices = filtered
+        self.nsamp = len(self.indices)
         self.mvids = mvids
         self.elos = elos
         self.elo_edges = elo_edges
@@ -96,7 +128,7 @@ class MMCDataset(Dataset):
                 return i
 
     def __getitem__(self, idx):
-        gs, nmoves, gidx = self.indices[idx]
+        gs, nmoves, gidx, cat = self.indices[idx]
         welo, belo = self.elos[gidx]
         n_inp = min(self.seq_len, nmoves - 1)
         inp = np.empty(n_inp, dtype="int32")
@@ -109,8 +141,14 @@ class MMCDataset(Dataset):
         b_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
         w_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
         b_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
+
         w_tgt[1::2] = NOOP
         b_tgt[::2] = NOOP
+
+        if cat == MMCDataset.WELO_ONLY:
+            b_tgt[1::2] = NOOP
+        elif cat == MMCDataset.BELO_ONLY:
+            w_tgt[::2] = NOOP
 
         w_head = self._get_head(welo)
         b_head = self._get_head(belo)
@@ -247,6 +285,7 @@ class MMCDataModule(L.LightningDataModule):
         batch_size,
         num_workers,
         load_cheatdata=False,
+        elo_range=None,
     ):
         super().__init__()
         self.max_seq_len = max_seq_len
@@ -255,6 +294,7 @@ class MMCDataModule(L.LightningDataModule):
         self.elo_edges = elo_edges
         if len(self.elo_edges) == 0 or self.elo_edges[-1] < float("inf"):
             self.elo_edges.append(float("inf"))
+        self.elo_range = elo_range
         self.load_cheatdata = load_cheatdata
         self.__dict__.update(load_data(datadir, load_cheatdata))
         self.min_moves = self.fmd["min_moves"]
@@ -268,6 +308,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.mvids,
                 self.elos,
                 self.elo_edges,
+                self.elo_range,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
@@ -276,6 +317,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.mvids,
                 self.elos,
                 self.elo_edges,
+                self.elo_range,
             )
         if stage == "validate":
             self.valset = MMCDataset(
@@ -285,6 +327,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.mvids,
                 self.elos,
                 self.elo_edges,
+                self.elo_range,
             )
 
         if stage in ["test", "predict"]:
@@ -306,6 +349,7 @@ class MMCDataModule(L.LightningDataModule):
                     self.mvids,
                     self.elos,
                     self.elo_edges,
+                    self.elo_range,
                 )
 
     def train_dataloader(self):

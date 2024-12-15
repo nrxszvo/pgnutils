@@ -164,7 +164,7 @@ class MimicChessCoreModule(L.LightningModule):
     def forward_classifier(self, tokens, last_idx):
         return self.model(tokens, last_idx)
 
-    def forward(self, tokens):
+    def forward(self, tokens, *args):
         return self.model(tokens)
 
     def _chomp_logits(self, logits):
@@ -174,23 +174,23 @@ class MimicChessCoreModule(L.LightningModule):
 
     def _separate_logits(self, logits, batch):
         logits = self._chomp_logits(logits)
-        wlogits = torch.index_select(logits, 0, batch["offset_heads"][:, 0])
+        hlogits = torch.index_select(logits, 0, batch["offset_heads"][:, 0])
         blogits = torch.index_select(logits, 0, batch["offset_heads"][:, 1])
-        wtgt = batch["w_target"]
-        btgt = batch["b_target"]
-        return wlogits, blogits, wtgt, btgt
+        hlogits[:, 1::2] = blogits[:, 1::2]
+        tgt = batch["w_target"]
+        tgt[:, 1::2] = batch["b_target"][:, 1::2]
+
+        return hlogits, tgt
 
     def _get_loss(self, logits, batch):
         nhead = self.params.model_args.n_elo_heads
         if self.params.classifier:
             wloss = self.loss(logits[:, :nhead], batch["heads"][:, 0])
             bloss = self.loss(logits[:, nhead:], batch["heads"][:, 1])
+            return (wloss + bloss) / 2
         else:
-            wlogits, blogits, wtgt, btgt = self._separate_logits(logits, batch)
-            wloss = self.loss(wlogits, wtgt, ignore_index=self.NOOP)
-            bloss = self.loss(blogits, btgt, ignore_index=self.NOOP)
-
-        return (wloss + bloss) / 2
+            logits, tgt = self._separate_logits(logits, batch)
+            return self.loss(logits, tgt, ignore_index=self.NOOP)
 
     def training_step(self, batch, batch_idx):
         logits = self(batch["input"], batch["last_idx"])

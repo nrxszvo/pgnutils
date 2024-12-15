@@ -88,6 +88,7 @@ def main():
 
     model_args = ModelArgs(cfgyml.model_args)
     model_args.n_elo_heads = len(cfgyml.elo_edges) + 1
+    elo_range = getattr(cfgyml, "elo_range", None)
 
     def train_model(name, datadir, savepath):
         dm = MMCDataModule(
@@ -96,6 +97,7 @@ def main():
             model_args.max_seq_len,
             cfgyml.batch_size,
             n_workers,
+            elo_range=elo_range,
         )
         module_args = MMCModuleArgs(
             name,
