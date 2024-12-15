@@ -13,7 +13,6 @@ from torch import nn
 @dataclass
 class ModelArgs:
     dim: int = 4096
-    n_elo_heads: int = 1
     n_layers: int = 32
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
@@ -86,7 +85,7 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 
 
 class Attention(nn.Module):
-    def __init__(self, args: ModelArgs, is_elo_head: bool = False):
+    def __init__(self, args: ModelArgs):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
         model_parallel_size = 1
@@ -98,13 +97,6 @@ class Attention(nn.Module):
         n_total_heads = args.n_heads
         self.n_orig_local_heads = self.n_local_heads
         self.batch_mul = 1
-
-        if is_elo_head:
-            self.batch_mul = args.n_elo_heads
-            n_total_heads *= args.n_elo_heads
-            self.n_local_heads *= args.n_elo_heads
-            self.n_kv_heads *= args.n_elo_heads
-            self.n_local_kv_heads *= args.n_elo_heads
 
         self.wq = nn.Linear(
             args.dim,
@@ -195,13 +187,10 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, layer_id: int, args: ModelArgs, is_elo_head: bool = False):
+    def __init__(self, layer_id: int, args: ModelArgs):
         super().__init__()
-        self.is_elo_head = is_elo_head
-        if is_elo_head:
-            self.n_elo_heads = args.n_elo_heads
 
-        self.attention = Attention(args, is_elo_head)
+        self.attention = Attention(args)
         self.feed_forward = FeedForward(
             dim=args.dim,
             hidden_dim=4 * args.dim,
@@ -219,17 +208,7 @@ class TransformerBlock(nn.Module):
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
     ):
-        if self.is_elo_head:
-            bs, slen, dim = x.shape
-            n_rep = self.n_elo_heads
-            res = (
-                x[:, None, :, :]
-                .expand(bs, n_rep, slen, dim)
-                .reshape(bs * n_rep, slen, dim)
-            )
-        else:
-            res = x
-        h = res + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
+        h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -245,11 +224,7 @@ class Transformer(nn.Module):
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
-            self.layers.append(
-                TransformerBlock(
-                    layer_id, params, is_elo_head=layer_id == params.n_layers - 1
-                )
-            )
+            self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
@@ -276,64 +251,3 @@ class Transformer(nn.Module):
         h = self.norm(h)
         output = self.output(h).float()
         return output
-
-
-class EloClassifier(nn.Module):
-    def __init__(self, params: ModelArgs):
-        super().__init__()
-        self.params = params
-        self.vocab_size = params.vocab_size
-        self.n_layers = params.n_layers
-
-        self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
-
-        self.layers = torch.nn.ModuleList()
-
-        for layer_id in range(params.n_classifier_layers):
-            self.layers.append(TransformerBlock(layer_id, params))
-
-        self.classifier_norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.classifier = torch.nn.RNN(
-            params.dim,
-            params.dim,
-            bias=False,
-            batch_first=True,
-            nonlinearity="relu",
-        )
-        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.classifier_output = torch.nn.Linear(
-            params.dim, 2 * params.n_elo_heads, bias=False
-        )
-
-        self.freqs_cis = precompute_freqs_cis(
-            params.dim // params.n_heads,
-            params.max_seq_len * 2,
-            params.rope_theta,
-        )
-
-    def forward(
-        self,
-        tokens: torch.Tensor,
-        last_idx: torch.Tensor,
-        start_pos: int = 0,
-    ):
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
-
-        mask = None
-        if seqlen > 1:
-            mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device)
-            mask = torch.triu(mask, diagonal=1)
-
-        for layer in self.layers:
-            h = layer(h, start_pos, freqs_cis, mask)
-
-        h = self.classifier_norm(h)
-        h, _ = self.classifier(h)
-        dim = h.shape[2]
-        h = h.reshape(-1, dim)
-        h = torch.index_select(h, 0, last_idx)
-        output = self.classifier_output(h.squeeze())
-        return output.float()

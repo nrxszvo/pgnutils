@@ -15,6 +15,37 @@ def init_worker(seed):
 def collate_fn(batch):
     maxinp = 0
     maxtgt = 0
+    openmoves = batch[0]["opening"].shape[0]
+    for d in batch:
+        inp = d["input"]
+        tgt = d["target"]
+        maxinp = max(maxinp, inp.shape[0])
+        maxtgt = max(maxtgt, tgt.shape[0])
+
+    bs = len(batch)
+    inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
+    openings = torch.empty((bs, openmoves), dtype=torch.int64)
+    targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
+
+    for i, d in enumerate(batch):
+        inp = d["input"]
+        tgt = d["target"]
+        ni = inp.shape[0]
+        nt = tgt.shape[0]
+        inputs[i, :ni] = torch.from_numpy(inp)
+        targets[i, :nt] = torch.from_numpy(tgt)
+        openings[i] = torch.from_numpy(d["opening"])
+
+    return {
+        "input": inputs,
+        "target": targets,
+        "opening": openings,
+    }
+
+
+def cheat_collate_fn(batch):
+    maxinp = 0
+    maxtgt = 0
     maxcd = 3
     openmoves = batch[0]["opening"].shape[0]
     for d in batch:
@@ -22,8 +53,7 @@ def collate_fn(batch):
         tgt = d["w_target"]
         maxinp = max(maxinp, inp.shape[0])
         maxtgt = max(maxtgt, tgt.shape[0])
-        if "cheatdata" in d:
-            maxcd = max(maxcd, len(d["cheatdata"]))
+        maxcd = max(maxcd, len(d["cheatdata"]))
 
     bs = len(batch)
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
@@ -33,7 +63,6 @@ def collate_fn(batch):
     btargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     heads = torch.empty((bs, 2), dtype=torch.int64)
     offset_heads = torch.empty((bs, 2), dtype=torch.int64)
-    last_idx = torch.empty(bs, dtype=torch.int64)
 
     nhead = batch[0]["nhead"]
     for i, d in enumerate(batch):
@@ -43,10 +72,9 @@ def collate_fn(batch):
         ni = inp.shape[0]
         nt = wtgt.shape[0]
         inputs[i, :ni] = torch.from_numpy(inp)
-        if "cheatdata" in d:
-            ncd = len(d["cheatdata"])
-            if ncd > 0:
-                cheatdata[i, :ncd] = torch.from_numpy(d["cheatdata"])
+        ncd = len(d["cheatdata"])
+        if ncd > 0:
+            cheatdata[i, :ncd] = torch.from_numpy(d["cheatdata"])
         wtargets[i, :nt] = torch.from_numpy(wtgt)
         btargets[i, :nt] = torch.from_numpy(btgt)
         openings[i] = torch.from_numpy(d["opening"])
@@ -54,7 +82,6 @@ def collate_fn(batch):
         heads[i, 1] = d["b_head"]
         offset_heads[i, 0] = i * nhead + heads[i, 0]
         offset_heads[i, 1] = i * nhead + heads[i, 1]
-        last_idx[i] = i * maxinp + d["n_inp"] - 1
 
     return {
         "input": inputs,
@@ -64,7 +91,6 @@ def collate_fn(batch):
         "opening": openings,
         "heads": heads,
         "offset_heads": offset_heads,
-        "last_idx": last_idx,
     }
 
 
@@ -77,55 +103,45 @@ class MMCDataset(Dataset):
     def __init__(
         self,
         seq_len,
-        min_moves,
+        opening_moves,
         indices,
         mvids,
         elos,
-        elo_edges,
-        elo_range=None,
+        elo_range,
     ):
         super().__init__()
         self.seq_len = seq_len
-        self.min_moves = min_moves
-        if elo_range is not None:
-            lo, hi = elo_range
+        self.opening_moves = opening_moves
+        lo, hi = elo_range
 
-            def get_cat(welo, belo):
-                def in_rng(elo):
-                    return (lo <= elo) and (elo <= hi)
+        def get_cat(welo, belo):
+            def in_rng(elo):
+                return (lo <= elo) and (elo <= hi)
 
-                if in_rng(welo) and in_rng(belo):
-                    return MMCDataset.BOTH
-                elif in_rng(welo):
-                    return MMCDataset.WELO_ONLY
-                elif in_rng(belo):
-                    return MMCDataset.BELO_ONLY
-                else:
-                    return MMCDataset.NEITHER
+            if in_rng(welo) and in_rng(belo):
+                return MMCDataset.BOTH
+            elif in_rng(welo):
+                return MMCDataset.WELO_ONLY
+            elif in_rng(belo):
+                return MMCDataset.BELO_ONLY
+            else:
+                return MMCDataset.NEITHER
 
-            filtered = []
-            for md in indices:
-                _, _, gidx = md
-                welo, belo = elos[gidx]
-                cat = get_cat(welo, belo)
-                if cat != MMCDataset.NEITHER:
-                    filtered.append(md.tolist() + [cat])
-        else:
-            filtered = [md.tolist() + [MMCDataset.BOTH] for md in indices]
+        filtered = []
+        for md in indices:
+            _, _, gidx = md
+            welo, belo = elos[gidx]
+            cat = get_cat(welo, belo)
+            if cat != MMCDataset.NEITHER:
+                filtered.append(md.tolist() + [cat])
 
         self.indices = filtered
         self.nsamp = len(self.indices)
         self.mvids = mvids
         self.elos = elos
-        self.elo_edges = elo_edges
 
     def __len__(self):
         return self.nsamp
-
-    def _get_head(self, elo):
-        for i, edge in enumerate(self.elo_edges):
-            if elo <= edge:
-                return i
 
     def __getitem__(self, idx):
         gs, nmoves, gidx, cat = self.indices[idx]
@@ -134,42 +150,32 @@ class MMCDataset(Dataset):
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
 
-        opening = np.empty(self.min_moves, dtype="int64")
-        opening[:] = self.mvids[gs : gs + self.min_moves]
+        opening = np.empty(self.opening_moves, dtype="int64")
+        opening[:] = self.mvids[gs : gs + self.opening_moves]
 
-        w_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
-        b_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
-        w_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
-        b_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
-
-        w_tgt[1::2] = NOOP
-        b_tgt[::2] = NOOP
+        tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
+        tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
 
         if cat == MMCDataset.WELO_ONLY:
-            b_tgt[1::2] = NOOP
+            tgt[1::2] = NOOP
         elif cat == MMCDataset.BELO_ONLY:
-            w_tgt[::2] = NOOP
-
-        w_head = self._get_head(welo)
-        b_head = self._get_head(belo)
+            tgt[::2] = NOOP
 
         return {
             "input": inp,
-            "w_target": w_tgt,
-            "b_target": b_tgt,
+            "target": tgt,
             "opening": opening,
-            "w_head": w_head,
-            "b_head": b_head,
-            "nhead": len(self.elo_edges),
             "n_inp": n_inp,
         }
 
 
 class MMCCheatingDataset(Dataset):
-    def __init__(self, seq_len, min_moves, indices, cheatdata, mvids, elos, elo_edges):
+    def __init__(
+        self, seq_len, opening_moves, indices, cheatdata, mvids, elos, elo_edges
+    ):
         super().__init__()
         self.seq_len = seq_len
-        self.min_moves = min_moves
+        self.opening_moves = opening_moves
         self.nsamp = len(indices)
         self.indices = indices
         self.cheatdata = {}
@@ -177,8 +183,8 @@ class MMCCheatingDataset(Dataset):
             cd = cheatdata[gidx]
             filtered = []
             for offset, cheat_mvid, _, _ in cd:
-                if offset >= min_moves and offset <= min(seq_len, nmoves - 1):
-                    filtered.append([offset - min_moves, cheat_mvid])
+                if offset >= opening_moves and offset <= min(seq_len, nmoves - 1):
+                    filtered.append([offset - opening_moves, cheat_mvid])
             self.cheatdata[gidx] = np.array(filtered)
         self.mvids = mvids
         self.elos = elos
@@ -199,13 +205,13 @@ class MMCCheatingDataset(Dataset):
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
 
-        opening = np.empty(self.min_moves, dtype="int64")
-        opening[:] = self.mvids[gs : gs + self.min_moves]
+        opening = np.empty(self.opening_moves, dtype="int64")
+        opening[:] = self.mvids[gs : gs + self.opening_moves]
 
-        w_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
-        b_tgt = np.empty(n_inp + 1 - self.min_moves, dtype="int64")
-        w_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
-        b_tgt[:] = self.mvids[gs + self.min_moves : gs + n_inp + 1]
+        w_tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
+        b_tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
+        w_tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
+        b_tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
         w_tgt[1::2] = NOOP
         b_tgt[::2] = NOOP
 
@@ -231,10 +237,6 @@ def load_data(dirname, load_cheatdata=False):
     md = np.load(os.path.join(dirname, "md.npy"), allow_pickle=True).item()
     with open(f"{dirname}/fmd.json") as f:
         fmd = json.load(f)
-    # min_moves is the minimum game length that can be included in the dataset
-    # we subtract one here so that it now represents the minimum number of moves that the
-    # model must see before making its first prediction
-    fmd["min_moves"] -= 1
     data = {
         "md": md,
         "fmd": fmd,
@@ -281,11 +283,11 @@ class MMCDataModule(L.LightningDataModule):
         self,
         datadir,
         elo_edges,
+        elo_range,
         max_seq_len,
         batch_size,
         num_workers,
         load_cheatdata=False,
-        elo_range=None,
     ):
         super().__init__()
         self.max_seq_len = max_seq_len
@@ -297,36 +299,36 @@ class MMCDataModule(L.LightningDataModule):
         self.elo_range = elo_range
         self.load_cheatdata = load_cheatdata
         self.__dict__.update(load_data(datadir, load_cheatdata))
-        self.min_moves = self.fmd["min_moves"]
+        # min_moves is the minimum game length that can be included in the dataset
+        # we subtract one here so that it now represents the minimum number of moves that the
+        # model must see before making its first prediction
+        self.opening_moves = self.fmd["min_moves"] - 1
 
     def setup(self, stage):
         if stage == "fit":
             self.trainset = MMCDataset(
                 self.max_seq_len,
-                self.fmd["min_moves"],
+                self.opening_moves,
                 self.train,
                 self.mvids,
                 self.elos,
-                self.elo_edges,
                 self.elo_range,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
-                self.fmd["min_moves"],
+                self.opening_moves,
                 self.val,
                 self.mvids,
                 self.elos,
-                self.elo_edges,
                 self.elo_range,
             )
         if stage == "validate":
             self.valset = MMCDataset(
                 self.max_seq_len,
-                self.fmd["min_moves"],
+                self.opening_moves,
                 self.val,
                 self.mvids,
                 self.elos,
-                self.elo_edges,
                 self.elo_range,
             )
 
@@ -334,7 +336,7 @@ class MMCDataModule(L.LightningDataModule):
             if self.load_cheatdata:
                 self.testset = MMCCheatingDataset(
                     self.max_seq_len,
-                    self.fmd["min_moves"],
+                    self.opening_moves,
                     self.test,
                     self.cheatdata,
                     self.mvids,
@@ -344,11 +346,10 @@ class MMCDataModule(L.LightningDataModule):
             else:
                 self.testset = MMCDataset(
                     self.max_seq_len,
-                    self.fmd["min_moves"],
+                    self.opening_moves,
                     self.test,
                     self.mvids,
                     self.elos,
-                    self.elo_edges,
                     self.elo_range,
                 )
 

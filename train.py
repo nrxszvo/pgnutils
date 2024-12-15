@@ -13,7 +13,7 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
-from mmc import MimicChessCoreModule, MMCModuleArgs, MimicChessHeadModule
+from mmc import MimicChessModule, MMCModuleArgs
 from mmcdataset import MMCDataModule, NOOP
 from model import ModelArgs
 
@@ -30,19 +30,9 @@ parser.add_argument(
     help="experiment name for log files and checkpoints",
 )
 parser.add_argument(
-    "--train_heads",
-    action="store_true",
-    help="Train the head for a specific elo range using an existing MMC core checkpoint",
-)
-parser.add_argument(
     "--ckpt",
     default=None,
     help="MMC checkpoint from which to resume training",
-)
-parser.add_argument(
-    "--classifier",
-    action="store_true",
-    help="train a classifier on top of pre-trained transformer",
 )
 
 
@@ -68,14 +58,8 @@ def main():
     args = parser.parse_args()
     cfgyml = get_config(args.cfg)
 
-    if args.train_heads:
-        save_path = os.path.join(args.save_path, "heads", args.name)
-        os.makedirs(save_path, exist_ok=True)
-        with open(os.path.join(save_path, "core_ckpt.txt"), "w") as f:
-            f.write(args.core_ckpt)
-    else:
-        save_path = os.path.join(args.save_path, args.name)
-        os.makedirs(save_path, exist_ok=True)
+    save_path = os.path.join(args.save_path, args.name)
+    os.makedirs(save_path, exist_ok=True)
 
     shutil.copyfile(args.cfg, os.path.join(save_path, args.cfg))
 
@@ -87,23 +71,21 @@ def main():
     torch.manual_seed(cfgyml.random_seed)
 
     model_args = ModelArgs(cfgyml.model_args)
-    model_args.n_elo_heads = len(cfgyml.elo_edges) + 1
-    elo_range = getattr(cfgyml, "elo_range", None)
 
     def train_model(name, datadir, savepath):
         dm = MMCDataModule(
             datadir,
             cfgyml.elo_edges,
+            cfgyml.elo_range,
             model_args.max_seq_len,
             cfgyml.batch_size,
             n_workers,
-            elo_range=elo_range,
         )
         module_args = MMCModuleArgs(
             name,
             os.path.join(savepath, "ckpt"),
             model_args,
-            dm.min_moves,
+            dm.opening_moves,
             NOOP,
             cfgyml.lr_scheduler_params,
             cfgyml.max_steps,
@@ -111,22 +93,16 @@ def main():
             cfgyml.random_seed,
             cfgyml.strategy,
             devices,
-            args.classifier,
         )
 
-        mmc = MimicChessCoreModule(module_args)
+        mmc = MimicChessModule(module_args)
 
         nweights, nflpweights = mmc.num_params()
         est_tflops = 6 * nflpweights * cfgyml.batch_size * model_args.max_seq_len / 1e12
         print(f"# model params: {nweights:.2e}")
         print(f"estimated TFLOPs: {est_tflops:.1f}")
 
-        ckpt = args.ckpt
-        if args.classifier:
-            mmc.init_classifier(ckpt)
-            ckpt = None
-
-        mmc.fit(dm, ckpt=ckpt)
+        mmc.fit(dm, ckpt=args.ckpt)
 
     datadir = cfgyml.datadir
     train_model(args.name, datadir, save_path)
