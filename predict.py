@@ -17,6 +17,11 @@ from utils import (
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
 parser.add_argument("--cp", required=True, help="checkpoint file")
+parser.add_argument(
+    "--datadir",
+    default=None,
+    help="alternative data directory to use instead of value in cfg file",
+)
 parser.add_argument("--bs", default=None, type=int, help="batch size")
 
 
@@ -47,12 +52,11 @@ def evaluate(outputs, elo_edges):
     cheatStats.report()
 
 
-def predict(cfgyml, cp, fmd, n_workers):
+def predict(cfgyml, datadir, cp, fmd, n_workers):
     model_args = ModelArgs(cfgyml.model_args)
     dm = MMCDataModule(
-        datadir=cfgyml.datadir,
+        datadir=datadir,
         elo_edges=cfgyml.elo_edges,
-        elo_range=cfgyml.elo_range,
         max_seq_len=model_args.max_seq_len,
         batch_size=cfgyml.batch_size,
         num_workers=n_workers,
@@ -87,10 +91,11 @@ def main():
     if args.bs:
         cfgyml.batch_size = args.bs
 
-    with open(os.path.join(cfgyml.datadir, "fmd.json")) as f:
+    datadir = cfgyml.datadir if args.datadir is None else args.datadir
+    with open(os.path.join(datadir, "fmd.json")) as f:
         fmd = json.load(f)
 
-    outputs = predict(cfgyml, args.cp, fmd, n_workers)
+    outputs = predict(cfgyml, datadir, args.cp, fmd, n_workers)
     evaluate(outputs, cfgyml.elo_edges)
 
 
