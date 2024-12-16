@@ -32,6 +32,7 @@ if [ ! -d "${HOME}/git/mimicChess" ]; then
 	if [ ! -e "datasets" ]; then
 		datadir=$(ls ~ | grep mimicChess)
 		ln -s ${HOME}/${datadir}/datasets .
+		ln -s ${HOME}/${datadir}/models ckpts
 	fi
 	if [ -z ${MYNAME+x} ]; then
 		echo "git name and email not specified; skipping git config"
@@ -39,7 +40,6 @@ if [ ! -d "${HOME}/git/mimicChess" ]; then
 		git config --global user.name ${MYNAME} 
 		git config --global user.email ${MYEMAIL} 
 	fi
-	#git remote set-url origin "https://nrxsvzo:${GHTOKEN}@github.com/nrxszvo/mimicChess.git"
 	cd ${HOME} 
 fi
 
@@ -74,5 +74,5 @@ fi
 
 echo "set -g mouse on" > ${HOME}/.tmux.conf
 
-sudo apt-get install -y stockfish
+sudo apt-get install -y stockfish libzstd-dev
 
