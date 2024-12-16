@@ -237,7 +237,7 @@ class MimicChessModule(L.LightningModule):
             "sorted_probs": sprobs,
             "target_probs": tprobs,
             "heads": batch["heads"],
-            "opening": batch["opening"],
+            "openings": batch["opening"],
             "targets": tgt.unsqueeze(1),
             "cheat_probs": cheat_probs,
             "cheatdata": cheatdata,

@@ -238,6 +238,11 @@ def load_data(dirname, load_cheatdata=False):
             shape=tuple(fmd["test_shape"]),
         ),
     }
+    elodir = os.path.join(dirname, "elo.npy")
+    if os.path.exists(elodir):
+        data["elos"] = np.memmap(
+            elodir, mode="r", dtype="int16", shape=(fmd["ngames"], 2)
+        )
     if load_cheatdata:
         data["cheatdata"] = np.load(
             os.path.join(dirname, "cheatdata.npy"), allow_pickle=True
