@@ -76,7 +76,6 @@ def main():
         dm = MMCDataModule(
             datadir,
             cfgyml.elo_edges,
-            cfgyml.elo_range,
             model_args.max_seq_len,
             cfgyml.batch_size,
             n_workers,

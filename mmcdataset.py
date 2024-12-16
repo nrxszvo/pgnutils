@@ -106,46 +106,19 @@ class MMCDataset(Dataset):
         opening_moves,
         indices,
         mvids,
-        elos,
-        elo_range,
     ):
         super().__init__()
         self.seq_len = seq_len
         self.opening_moves = opening_moves
-        lo, hi = elo_range
-
-        def get_cat(welo, belo):
-            def in_rng(elo):
-                return (lo <= elo) and (elo <= hi)
-
-            if in_rng(welo) and in_rng(belo):
-                return MMCDataset.BOTH
-            elif in_rng(welo):
-                return MMCDataset.WELO_ONLY
-            elif in_rng(belo):
-                return MMCDataset.BELO_ONLY
-            else:
-                return MMCDataset.NEITHER
-
-        filtered = []
-        for md in indices:
-            _, _, gidx = md
-            welo, belo = elos[gidx]
-            cat = get_cat(welo, belo)
-            if cat != MMCDataset.NEITHER:
-                filtered.append(md.tolist() + [cat])
-
-        self.indices = filtered
+        self.indices = indices
         self.nsamp = len(self.indices)
         self.mvids = mvids
-        self.elos = elos
 
     def __len__(self):
         return self.nsamp
 
     def __getitem__(self, idx):
-        gs, nmoves, gidx, cat = self.indices[idx]
-        welo, belo = self.elos[gidx]
+        gs, nmoves, cat = self.indices[idx]
         n_inp = min(self.seq_len, nmoves - 1)
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
@@ -246,12 +219,6 @@ def load_data(dirname, load_cheatdata=False):
             dtype="int16",
             shape=md["nmoves"],
         ),
-        "elos": np.memmap(
-            os.path.join(dirname, "elo.npy"),
-            mode="r",
-            dtype="int16",
-            shape=(fmd["ngames"], 2),
-        ),
         "train": np.memmap(
             os.path.join(dirname, "train.npy"),
             mode="r",
@@ -283,7 +250,6 @@ class MMCDataModule(L.LightningDataModule):
         self,
         datadir,
         elo_edges,
-        elo_range,
         max_seq_len,
         batch_size,
         num_workers,
@@ -296,7 +262,6 @@ class MMCDataModule(L.LightningDataModule):
         self.elo_edges = elo_edges
         if len(self.elo_edges) == 0 or self.elo_edges[-1] < float("inf"):
             self.elo_edges.append(float("inf"))
-        self.elo_range = elo_range
         self.load_cheatdata = load_cheatdata
         self.__dict__.update(load_data(datadir, load_cheatdata))
         # min_moves is the minimum game length that can be included in the dataset
@@ -311,16 +276,12 @@ class MMCDataModule(L.LightningDataModule):
                 self.opening_moves,
                 self.train,
                 self.mvids,
-                self.elos,
-                self.elo_range,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.opening_moves,
                 self.val,
                 self.mvids,
-                self.elos,
-                self.elo_range,
             )
         if stage == "validate":
             self.valset = MMCDataset(
@@ -328,8 +289,6 @@ class MMCDataModule(L.LightningDataModule):
                 self.opening_moves,
                 self.val,
                 self.mvids,
-                self.elos,
-                self.elo_range,
             )
 
         if stage in ["test", "predict"]:
@@ -349,8 +308,6 @@ class MMCDataModule(L.LightningDataModule):
                     self.opening_moves,
                     self.test,
                     self.mvids,
-                    self.elos,
-                    self.elo_range,
                 )
 
     def train_dataloader(self):
@@ -373,9 +330,10 @@ class MMCDataModule(L.LightningDataModule):
         )
 
     def predict_dataloader(self):
+        cfn = cheat_collate_fn if self.load_cheatdata else collate_fn
         return DataLoader(
             self.testset,
-            collate_fn=collate_fn,
+            collate_fn=cfn,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             persistent_workers=self.num_workers > 0,
