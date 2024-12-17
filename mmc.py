@@ -253,12 +253,3 @@ class MimicChessModule(L.LightningModule):
         trainer = L.Trainer(callbacks=[TQDMProgressBar()], **tkargs)
         outputs = trainer.predict(self, datamodule)
         return outputs
-
-    def on_save_checkpoint(self, checkpoint):
-        """
-        Tentative fix for FSDP checkpointing issue
-        """
-        if not checkpoint.get("state_dict", None):
-            state_dict = self.trainer.model.state_dict()
-            checkpoint["state_dict"] = state_dict
-        return super().on_save_checkpoint(checkpoint)
