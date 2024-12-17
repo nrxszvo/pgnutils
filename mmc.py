@@ -14,8 +14,7 @@ from torch.optim.lr_scheduler import (
     StepLR,
 )
 
-from model import ModelArgs, Transformer, EloClassifier
-from utils import select_heads
+from model import ModelArgs, Transformer
 
 
 @dataclass
@@ -23,7 +22,7 @@ class MMCModuleArgs:
     name: str
     outdir: str
     model_args: ModelArgs
-    min_moves: int
+    opening_moves: int
     NOOP: int
     lr_scheduler_params: Dict
     max_steps: int
@@ -31,10 +30,9 @@ class MMCModuleArgs:
     random_seed: Optional[int]
     strategy: Optional[str]
     devices: Optional[int]
-    classifier: bool
 
 
-class MimicChessCoreModule(L.LightningModule):
+class MimicChessModule(L.LightningModule):
     def __init__(self, params: MMCModuleArgs):
         super().__init__()
         self.save_hyperparameters()
@@ -42,7 +40,7 @@ class MimicChessCoreModule(L.LightningModule):
         L.seed_everything(params.random_seed, workers=True)
         self.model = None
         self.model_args = params.model_args
-        self.min_moves = params.min_moves
+        self.opening_moves = params.opening_moves
         self.NOOP = params.NOOP
         self.val_check_steps = params.val_check_steps
         self.max_steps = params.max_steps
@@ -70,12 +68,15 @@ class MimicChessCoreModule(L.LightningModule):
         }
         self.callbacks = [
             TQDMProgressBar(),
-            ModelCheckpoint(
-                dirpath=params.outdir,
-                filename=params.name + "-{train_loss:.2f}",
-                every_n_train_steps=val_check_interval,
-            ),
         ]
+        if params.outdir is not None:
+            self.callbacks.append(
+                ModelCheckpoint(
+                    dirpath=params.outdir,
+                    filename=params.name + "-{train_loss:.2f}",
+                    every_n_train_steps=val_check_interval,
+                )
+            )
 
         self._init_model()
         self.trainer = L.Trainer(callbacks=self.callbacks, **self.trainer_kwargs)
@@ -83,10 +84,7 @@ class MimicChessCoreModule(L.LightningModule):
     def _init_model(self):
         if self.model is not None:
             return
-        if self.params.classifier:
-            self.model = EloClassifier(self.model_args)
-        else:
-            self.model = Transformer(self.model_args)
+        self.model = Transformer(self.model_args)
 
     def num_params(self):
         nparams = 0
@@ -161,39 +159,20 @@ class MimicChessCoreModule(L.LightningModule):
         }
         return {"optimizer": optimizer, "lr_scheduler": config}
 
-    def forward_classifier(self, tokens, last_idx):
-        return self.model(tokens, last_idx)
-
     def forward(self, tokens):
         return self.model(tokens)
 
     def _chomp_logits(self, logits):
         logits = logits.permute(0, 2, 1)
-        logits = logits[:, :, self.min_moves - 1 :]
+        logits = logits[:, :, self.opening_moves - 1 :]
         return logits
 
-    def _separate_logits(self, logits, batch):
-        logits = self._chomp_logits(logits)
-        wlogits = torch.index_select(logits, 0, batch["offset_heads"][:, 0])
-        blogits = torch.index_select(logits, 0, batch["offset_heads"][:, 1])
-        wtgt = batch["w_target"]
-        btgt = batch["b_target"]
-        return wlogits, blogits, wtgt, btgt
-
     def _get_loss(self, logits, batch):
-        nhead = self.params.model_args.n_elo_heads
-        if self.params.classifier:
-            wloss = self.loss(logits[:, :nhead], batch["heads"][:, 0])
-            bloss = self.loss(logits[:, nhead:], batch["heads"][:, 1])
-        else:
-            wlogits, blogits, wtgt, btgt = self._separate_logits(logits, batch)
-            wloss = self.loss(wlogits, wtgt, ignore_index=self.NOOP)
-            bloss = self.loss(blogits, btgt, ignore_index=self.NOOP)
-
-        return (wloss + bloss) / 2
+        logits = self._chomp_logits(logits)
+        return self.loss(logits, batch["target"], ignore_index=self.NOOP)
 
     def training_step(self, batch, batch_idx):
-        logits = self(batch["input"], batch["last_idx"])
+        logits = self(batch["input"])
         loss = self._get_loss(logits, batch)
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
@@ -201,7 +180,7 @@ class MimicChessCoreModule(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        logits = self(batch["input"], batch["last_idx"])
+        logits = self(batch["input"])
         valid_loss = self._get_loss(logits, batch)
 
         if torch.isnan(valid_loss):
@@ -239,20 +218,16 @@ class MimicChessCoreModule(L.LightningModule):
         tgt = batch["w_target"]
         tgt[:, 1::2] = batch["b_target"][:, 1::2]
 
-        bs, seqlen = tgt.shape
-        bsheads, nclass, _ = probs.shape
-        nheads = bsheads // bs
-        oh_tgt = tgt[:, None].repeat(1, nheads, 1).reshape(-1, seqlen)
-        mask = F.one_hot(oh_tgt, nclass).permute(0, 2, 1)
+        _, nclass, _ = probs.shape
+        mask = F.one_hot(tgt, nclass).permute(0, 2, 1)
         tprobs = (probs * mask).sum(dim=1)
         cheatdata = batch["cheatdata"]
-        head_probs = select_heads(probs, batch["offset_heads"])
         cheat_probs = []
         for i, cd in enumerate(cheatdata):
             idx = (cd[:, 0] != -1).nonzero()[:, 0]
             cps = []
             if len(idx) > 0:
-                seq_probs = torch.index_select(head_probs[i], 1, cd[idx, 0])
+                seq_probs = torch.index_select(probs[i], 1, cd[idx, 0])
                 for j, offset in enumerate(cd[idx, 1]):
                     cps.append(seq_probs[offset, j])
             cheat_probs.append(torch.Tensor(cps))
@@ -261,26 +236,12 @@ class MimicChessCoreModule(L.LightningModule):
             "sorted_tokens": stokens,
             "sorted_probs": sprobs,
             "target_probs": tprobs,
-            "offset_heads": batch["offset_heads"],
             "heads": batch["heads"],
-            "opening": batch["opening"],
+            "openings": batch["opening"],
             "targets": tgt.unsqueeze(1),
             "cheat_probs": cheat_probs,
             "cheatdata": cheatdata,
         }
-
-    def init_classifier(self, ckpt_fn):
-        cf_dict = self.state_dict()
-        tf_dict = torch.load(ckpt_fn, map_location="cpu")["state_dict"]
-        tf_dict = {k: v for k, v in tf_dict.items() if k in cf_dict}
-        cf_dict.update(tf_dict)
-        self.load_state_dict(cf_dict)
-        for name, param in self.named_parameters():
-            if name.startswith("model.layers") or name in [
-                "model.tok_embeddings.weight",
-                "model.norm.weight",
-            ]:
-                param.requires_grad = False
 
     def fit(self, datamodule, ckpt=None):
         self.trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt)
@@ -292,32 +253,3 @@ class MimicChessCoreModule(L.LightningModule):
         trainer = L.Trainer(callbacks=[TQDMProgressBar()], **tkargs)
         outputs = trainer.predict(self, datamodule)
         return outputs
-
-    def on_save_checkpoint(self, checkpoint):
-        """
-        Tentative fix for FSDP checkpointing issue
-        """
-        if not checkpoint.get("state_dict", None):
-            state_dict = self.trainer.model.state_dict()
-            checkpoint["state_dict"] = state_dict
-        return super().on_save_checkpoint(checkpoint)
-
-
-class MimicChessHeadModule(MimicChessCoreModule):
-    def __init__(self, params: MMCModuleArgs, core_ckpt: str):
-        self.params = params
-        self.core_ckpt = core_ckpt
-        super().__init__(params)
-
-    def _init_model(self):
-        super()._init_model()
-        # exclude_layer = f"layers.{self.params.model_args.n_layers-1}"
-        # for name, param in self.model.named_parameters():
-        #    if (
-        #        name not in ["output.weight", "norm.weight"]
-        #        and exclude_layer not in name
-        #    ):
-        #        param.requires_grad = False
-
-        ckpt = torch.load(self.core_ckpt, map_location="cpu", weights_only=True)
-        self.load_state_dict(ckpt["state_dict"], strict=True)
