@@ -2,7 +2,7 @@ import os
 import time
 import torch
 from torch.profiler import profile, ProfilerActivity, record_function
-from dbg_model import Transformer, ModelArgs
+from model import Transformer, ModelArgs
 
 args = ModelArgs()
 bs = 256
