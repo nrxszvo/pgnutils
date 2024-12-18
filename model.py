@@ -93,11 +93,10 @@ class Attention(nn.Module):
         self.head_dim = args.dim // args.n_heads
 
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
-        n_total_heads = args.n_heads
 
         self.wq = nn.Linear(
             args.dim,
-            n_total_heads * self.head_dim,
+            args.n_heads * self.head_dim,
             bias=False,
         )
         self.wk = nn.Linear(
@@ -110,6 +109,7 @@ class Attention(nn.Module):
             self.n_kv_heads * self.head_dim,
             bias=False,
         )
+        self.we = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wo = nn.Linear(
             args.n_heads * self.head_dim,
             args.dim,
@@ -119,20 +119,22 @@ class Attention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
+        elo: torch.Tensor,
         start_pos: int,
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
     ):
         bsz, seqlen, _ = x.shape
-        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+        xq, xk, xv, ek = self.wq(x), self.wk(x), self.wv(x), self.we(elo)
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+        ek = ek.view(bsz, self.n_local_kv_heads, self.head_dim)
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        keys = xk
+        keys = xk * F.silu(ek)[:, None]
         values = xv
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -175,9 +177,10 @@ class FeedForward(nn.Module):
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
+        self.we = nn.Linear(dim, hidden_dim, bias=False)
 
-    def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+    def forward(self, x, elo):
+        return self.w2(F.silu(self.we(elo))[:, None] * F.silu(self.w1(x)) * self.w3(x))
 
 
 class TransformerBlock(nn.Module):
@@ -198,12 +201,13 @@ class TransformerBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
+        elo: torch.Tensor,
         start_pos: int,
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
     ):
-        h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
-        out = h + self.feed_forward(self.ffn_norm(h))
+        h = x + self.attention(self.attention_norm(x), elo, start_pos, freqs_cis, mask)
+        out = h + self.feed_forward(self.ffn_norm(h), elo)
         return out
 
 
@@ -215,6 +219,7 @@ class Transformer(nn.Module):
         self.n_layers = params.n_layers
 
         self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
+        self.elo_embeddings = nn.Embedding(params.n_elo_groups, params.dim)
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
@@ -229,9 +234,12 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
+    def forward(
+        self, tokens: torch.Tensor, elo_groups: torch.Tensor, start_pos: int = 0
+    ):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
+        elo = self.elo_embeddings(elo_groups)
         self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
@@ -241,7 +249,7 @@ class Transformer(nn.Module):
             mask = torch.triu(mask, diagonal=1)
 
         for layer in self.layers:
-            h = layer(h, start_pos, freqs_cis, mask)
+            h = layer(h, elo, start_pos, freqs_cis, mask)
         h = self.norm(h)
         output = self.output(h).float()
         return output
