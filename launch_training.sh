@@ -10,13 +10,13 @@ do
 		name=${param[1]}
 	elif [[ ${param[0]} = "nproc" ]]
 	then
-		echo 'eq nproc'
 		nproc=${param[1]}
 	elif [[ ${param[0]} = "nthread" ]]
 	then
 		nthread=${param[1]}
 	else
-		echo 'unequal'
+		echo "didn't recognize ${var}" 
+		exit
 	fi
 done
 cmd="OMP_NUM_THREADS=${nthread} torchrun --standalone --nnodes 1 --nproc-per-node ${nproc} train.py --name ${name}"
