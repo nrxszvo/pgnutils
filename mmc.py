@@ -159,8 +159,8 @@ class MimicChessModule(L.LightningModule):
         }
         return {"optimizer": optimizer, "lr_scheduler": config}
 
-    def forward(self, tokens):
-        return self.model(tokens)
+    def forward(self, tokens, elo_groups):
+        return self.model(tokens, elo_groups)
 
     def _chomp_logits(self, logits):
         logits = logits.permute(0, 2, 1)
@@ -172,7 +172,7 @@ class MimicChessModule(L.LightningModule):
         return self.loss(logits, batch["target"], ignore_index=self.NOOP)
 
     def training_step(self, batch, batch_idx):
-        logits = self(batch["input"])
+        logits = self(batch["input"], batch["elos"])
         loss = self._get_loss(logits, batch)
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
@@ -180,7 +180,7 @@ class MimicChessModule(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        logits = self(batch["input"])
+        logits = self(batch["input"], batch["elos"])
         valid_loss = self._get_loss(logits, batch)
 
         if torch.isnan(valid_loss):
@@ -208,7 +208,7 @@ class MimicChessModule(L.LightningModule):
         return next_token
 
     def predict_step(self, batch, batch_idx):
-        logits = self(batch["input"])
+        logits = self(batch["input"], batch["elos"])
         logits = self._chomp_logits(logits)
         probs = torch.softmax(logits, dim=-2)
         sprobs, stokens = torch.sort(probs, dim=-2, descending=True)

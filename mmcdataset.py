@@ -4,8 +4,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import lightning as L
 import json
-
-NOOP = 2 * 64 + 3  # white's QBISHOP on d1
+from pgn import NOOP
 
 
 def init_worker(seed):
@@ -26,6 +25,7 @@ def collate_fn(batch):
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
     targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
+    elos = torch.empty((bs, 2), dtype=torch.int64)
 
     for i, d in enumerate(batch):
         inp = d["input"]
@@ -35,11 +35,13 @@ def collate_fn(batch):
         inputs[i, :ni] = torch.from_numpy(inp)
         targets[i, :nt] = torch.from_numpy(tgt)
         openings[i] = torch.from_numpy(d["opening"])
+        elos[i] = torch.from_numpy(d["elos"])
 
     return {
         "input": inputs,
         "target": targets,
         "opening": openings,
+        "elos": elos,
     }
 
 
@@ -59,6 +61,7 @@ def cheat_collate_fn(batch):
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     cheatdata = -torch.ones((bs, maxcd, 2), dtype=torch.int64)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
+    elos = torch.empty((bs, 2), dtype=torch.int64)
     wtargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     btargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     heads = torch.empty((bs, 2), dtype=torch.int64)
@@ -78,6 +81,7 @@ def cheat_collate_fn(batch):
         wtargets[i, :nt] = torch.from_numpy(wtgt)
         btargets[i, :nt] = torch.from_numpy(btgt)
         openings[i] = torch.from_numpy(d["opening"])
+        elos[i] = d["elos"]
         heads[i, 0] = d["w_head"]
         heads[i, 1] = d["b_head"]
         offset_heads[i, 0] = i * nhead + heads[i, 0]
@@ -89,23 +93,21 @@ def cheat_collate_fn(batch):
         "w_target": wtargets,
         "b_target": btargets,
         "opening": openings,
+        "elos": elos,
         "heads": heads,
         "offset_heads": offset_heads,
     }
 
 
 class MMCDataset(Dataset):
-    WELO_ONLY = 0
-    BELO_ONLY = 1
-    BOTH = 2
-    NEITHER = -1
-
     def __init__(
         self,
         seq_len,
         opening_moves,
         indices,
         mvids,
+        elos,
+        elo_edges,
     ):
         super().__init__()
         self.seq_len = seq_len
@@ -113,12 +115,19 @@ class MMCDataset(Dataset):
         self.indices = indices
         self.nsamp = len(self.indices)
         self.mvids = mvids
+        self.elos = elos
+        self.elo_edges = elo_edges
 
     def __len__(self):
         return self.nsamp
 
+    def _get_head(self, elo):
+        for i, edge in enumerate(self.elo_edges):
+            if elo <= edge:
+                return i
+
     def __getitem__(self, idx):
-        gs, nmoves, cat = self.indices[idx]
+        gs, nmoves, gidx = self.indices[idx]
         n_inp = min(self.seq_len, nmoves - 1)
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
@@ -129,16 +138,15 @@ class MMCDataset(Dataset):
         tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
         tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
 
-        if cat == MMCDataset.WELO_ONLY:
-            tgt[1::2] = NOOP
-        elif cat == MMCDataset.BELO_ONLY:
-            tgt[::2] = NOOP
+        welo, belo = self.elos[gidx]
+        elos = np.array([self._get_head(welo), self._get_head(belo)])
 
         return {
             "input": inp,
             "target": tgt,
             "opening": opening,
             "n_inp": n_inp,
+            "elos": elos,
         }
 
 
@@ -281,12 +289,16 @@ class MMCDataModule(L.LightningDataModule):
                 self.opening_moves,
                 self.train,
                 self.mvids,
+                self.elos,
+                self.elo_edges,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.opening_moves,
                 self.val,
                 self.mvids,
+                self.elos,
+                self.elo_edges,
             )
         if stage == "validate":
             self.valset = MMCDataset(
@@ -294,6 +306,8 @@ class MMCDataModule(L.LightningDataModule):
                 self.opening_moves,
                 self.val,
                 self.mvids,
+                self.elos,
+                self.elo_edges,
             )
 
         if stage in ["test", "predict"]:
@@ -313,6 +327,8 @@ class MMCDataModule(L.LightningDataModule):
                     self.opening_moves,
                     self.test,
                     self.mvids,
+                    self.elos,
+                    self.elo_edges,
                 )
 
     def train_dataloader(self):

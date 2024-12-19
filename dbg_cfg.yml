@@ -1,5 +1,5 @@
-datadir: testdata/elos/2000
-elo_edges: []
+datadir: testdata
+elo_edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
 model_args:
   dim: 64 
   n_layers: 16 

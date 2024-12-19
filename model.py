@@ -16,13 +16,12 @@ class ModelArgs:
     n_layers: int = 32
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
+    n_elo_groups: int = 10
     vocab_size: int = 2048
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
     norm_eps: float = 1e-5
     rope_theta: float = 500000
-
-    max_batch_size: int = 32
     max_seq_len: int = 512
 
     def __init__(self, paramd):
@@ -130,11 +129,11 @@ class Attention(nn.Module):
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
-        ek = ek.view(bsz, self.n_local_kv_heads, self.head_dim)
+        ek = ek.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        keys = xk * F.silu(ek)[:, None]
+        keys = xk * F.silu(ek)
         values = xv
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -180,7 +179,7 @@ class FeedForward(nn.Module):
         self.we = nn.Linear(dim, hidden_dim, bias=False)
 
     def forward(self, x, elo):
-        return self.w2(F.silu(self.we(elo))[:, None] * F.silu(self.w1(x)) * self.w3(x))
+        return self.w2(F.silu(self.we(elo)) * F.silu(self.w1(x)) * self.w3(x))
 
 
 class TransformerBlock(nn.Module):
@@ -239,7 +238,11 @@ class Transformer(nn.Module):
     ):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
-        elo = self.elo_embeddings(elo_groups)
+        eloemb = self.elo_embeddings(elo_groups)  # _bsz, 2, dim
+        elo = torch.empty_like(h)
+        elo[:, ::2] = eloemb[:, 0:1]
+        elo[:, 1::2] = eloemb[:, 1:2]
+
         self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
