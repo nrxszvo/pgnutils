@@ -12,36 +12,28 @@ def init_worker(seed):
 
 
 def collate_fn(batch):
-    maxinp = 0
-    maxtgt = 0
+    mininp = float("inf")
     openmoves = batch[0]["opening"].shape[0]
     for d in batch:
-        inp = d["input"]
-        tgt = d["target"]
-        maxinp = max(maxinp, inp.shape[0])
-        maxtgt = max(maxtgt, tgt.shape[0])
+        mininp = min(mininp, d["n_inp"])
 
+    mintgt = mininp + 1 - openmoves
     bs = len(batch)
-    inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
+    inputs = torch.full((bs, mininp), NOOP, dtype=torch.int32)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
-    targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
-    elos = torch.empty((bs, 2), dtype=torch.int64)
+    targets = torch.full((bs, mintgt), NOOP, dtype=torch.int64)
 
     for i, d in enumerate(batch):
         inp = d["input"]
         tgt = d["target"]
-        ni = inp.shape[0]
-        nt = tgt.shape[0]
-        inputs[i, :ni] = torch.from_numpy(inp)
-        targets[i, :nt] = torch.from_numpy(tgt)
+        inputs[i] = torch.from_numpy(inp[:mininp])
+        targets[i] = torch.from_numpy(tgt[:mintgt])
         openings[i] = torch.from_numpy(d["opening"])
-        elos[i] = torch.from_numpy(d["elos"])
 
     return {
         "input": inputs,
         "target": targets,
         "opening": openings,
-        "elos": elos,
     }
 
 
@@ -121,14 +113,14 @@ class MMCDataset(Dataset):
     def __len__(self):
         return self.nsamp
 
-    def _get_head(self, elo):
+    def _get_group(self, elo):
         for i, edge in enumerate(self.elo_edges):
             if elo <= edge:
                 return i
 
     def __getitem__(self, idx):
         gs, nmoves, gidx = self.indices[idx]
-        n_inp = min(self.seq_len, nmoves - 1)
+        n_inp = min(self.seq_len, nmoves)
         inp = np.empty(n_inp, dtype="int32")
         inp[:] = self.mvids[gs : gs + n_inp]
 
@@ -136,17 +128,16 @@ class MMCDataset(Dataset):
         opening[:] = self.mvids[gs : gs + self.opening_moves]
 
         tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
-        tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
-
+        # tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
         welo, belo = self.elos[gidx]
-        elos = np.array([self._get_head(welo), self._get_head(belo)])
+        tgt[::2] = self._get_group(welo)
+        tgt[1::2] = self._get_group(belo)
 
         return {
             "input": inp,
             "target": tgt,
             "opening": opening,
             "n_inp": n_inp,
-            "elos": elos,
         }
 
 
@@ -174,7 +165,7 @@ class MMCCheatingDataset(Dataset):
     def __len__(self):
         return self.nsamp
 
-    def _get_head(self, elo):
+    def _get_group(self, elo):
         for i, edge in enumerate(self.elo_edges):
             if elo <= edge:
                 return i
@@ -196,8 +187,8 @@ class MMCCheatingDataset(Dataset):
         w_tgt[1::2] = NOOP
         b_tgt[::2] = NOOP
 
-        w_head = self._get_head(welo)
-        b_head = self._get_head(belo)
+        w_head = self._get_group(welo)
+        b_head = self._get_group(belo)
 
         cd = self.cheatdata[gidx]
 

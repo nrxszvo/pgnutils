@@ -71,7 +71,6 @@ def main():
     torch.manual_seed(cfgyml.random_seed)
 
     model_args = ModelArgs(cfgyml.model_args)
-    model_args.n_elo_groups = len(cfgyml.elo_edges) + 1
 
     def train_model(name, datadir, savepath):
         dm = MMCDataModule(
