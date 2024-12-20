@@ -167,27 +167,38 @@ class MimicChessModule(L.LightningModule):
         logits = logits[:, :, self.opening_moves - 1 :]
         return logits
 
-    def _get_loss(self, logits, batch):
+    def _get_loss(self, logits, target):
         logits = self._chomp_logits(logits)
-        return self.loss(logits, batch["target"], ignore_index=self.NOOP)
+        return self.loss(logits, target, ignore_index=self.NOOP)
 
     def training_step(self, batch, batch_idx):
         logits = self(batch["input"], batch["elos"])
-        loss = self._get_loss(logits, batch)
+        loss = self._get_loss(logits, batch["target"])
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
         self.log("lr", cur_lr, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        logits = self(batch["input"], batch["elos"])
-        valid_loss = self._get_loss(logits, batch)
+        elos = batch["elos"]
+        real_logits = self(batch["input"], elos)
+        real_loss = self._get_loss(real_logits, batch["target"])
 
-        if torch.isnan(valid_loss):
+        if torch.isnan(real_loss):
             raise Exception("Loss is NaN, training stopped.")
 
-        self.log("valid_loss", valid_loss, prog_bar=True, sync_dist=True)
-        return valid_loss
+        self.log("valid_loss", real_loss, prog_bar=True, sync_dist=True)
+
+        flipped_elos = elos.clone().detach()
+        flipped_elos[elos < 8] = 8
+        flipped_elos[elos >= 8] = 3
+        flipped_logits = self(batch["input"], elos)
+        flipped_loss = self._get_loss(flipped_logits, batch["target"])
+        if torch.isnan(flipped_loss):
+            raise Exception("flipped_loss is NaN, trained stopped")
+        self.log("flipped loss", flipped_loss, sync_dist=True)
+
+        return real_loss
 
     def sample_top_n(self, probs, n):
         probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
