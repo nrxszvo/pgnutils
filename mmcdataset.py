@@ -21,7 +21,7 @@ def collate_fn(batch):
     bs = len(batch)
     inputs = torch.full((bs, mininp), NOOP, dtype=torch.int32)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
-    targets = torch.full((bs, mintgt), NOOP, dtype=torch.int64)
+    targets = torch.full((bs, mintgt), NOOP, dtype=torch.float32)
 
     for i, d in enumerate(batch):
         inp = d["input"]
@@ -127,11 +127,11 @@ class MMCDataset(Dataset):
         opening = np.empty(self.opening_moves, dtype="int64")
         opening[:] = self.mvids[gs : gs + self.opening_moves]
 
-        tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
+        tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="float32")
         # tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
         welo, belo = self.elos[gidx]
-        tgt[::2] = self._get_group(welo)
-        tgt[1::2] = self._get_group(belo)
+        tgt[::2] = welo
+        tgt[1::2] = belo
 
         return {
             "input": inp,
@@ -218,6 +218,12 @@ def load_data(dirname, load_cheatdata=False):
             dtype="int16",
             shape=md["nmoves"],
         ),
+        "elos": np.memmap(
+            os.path.join(dirname, "whitened_elos.npy"),
+            mode="r",
+            dtype="float32",
+            shape=(fmd["ngames"], 2),
+        ),
         "train": np.memmap(
             os.path.join(dirname, "train.npy"),
             mode="r",
@@ -237,11 +243,7 @@ def load_data(dirname, load_cheatdata=False):
             shape=tuple(fmd["test_shape"]),
         ),
     }
-    elodir = os.path.join(dirname, "elo.npy")
-    if os.path.exists(elodir):
-        data["elos"] = np.memmap(
-            elodir, mode="r", dtype="int16", shape=(fmd["ngames"], 2)
-        )
+
     if load_cheatdata:
         data["cheatdata"] = np.load(
             os.path.join(dirname, "cheatdata.npy"), allow_pickle=True
