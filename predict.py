@@ -8,11 +8,6 @@ from config import get_config
 from mmc import MimicChessModule, MMCModuleArgs
 from mmcdataset import NOOP, MMCDataModule
 from model import ModelArgs
-from utils import (
-    LegalGameStats,
-    MoveStats,
-    CheatStats,
-)
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
@@ -30,28 +25,28 @@ parser.add_argument(
 
 @torch.inference_mode()
 def evaluate(outputs, elo_edges):
-    gameStats = LegalGameStats()
-    moveStats = MoveStats(elo_edges)
-    cheatStats = CheatStats(elo_edges)
     nbatch = len(outputs)
-
+    mean_err = 0
+    mean_scale = 0
+    n_pred = 0
+    breakpoint()
     for i, d in enumerate(outputs):
         print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-        stokens = d["sorted_tokens"]
-        tgts = d["targets"]
-        openings = d["openings"]
-        moveStats.eval(stokens, d["heads"], tgts)
-        gameStats.eval(stokens, openings, tgts)
-        cheatStats.eval(d["target_probs"], d["cheat_probs"], d["cheatdata"], d["heads"])
-
+        m_pred = d["mean_pred"]
+        s_pred = d["scale_pred"]
+        welos = d["welos"].unsqueeze(-1)
+        belos = d["belos"].unsqueeze(-1)
+        mean_err += ((m_pred[:, ::2] - welos) ** 2).sum() + (
+            (m_pred[:, 1::2] - belos) ** 2
+        ).sum()
+        mean_scale += s_pred.sum()
+        n_pred += m_pred.numel()
     print()
-    report = gameStats.report() + moveStats.report() + cheatStats.report()
-    for line in report:
-        print(line)
-    return report
+    print(f"Mean RMS: {(mean_err/n_pred)**0.5:.1f}")
+    print(f"Mean scale prediction: {mean_scale/n_pred:.2f}")
 
 
-def predict(cfgyml, datadir, cp, fmd, n_workers):
+def predict(cfgyml, datadir, cp, n_workers):
     model_args = ModelArgs(cfgyml.model_args)
     dm = MMCDataModule(
         datadir=datadir,
@@ -59,7 +54,6 @@ def predict(cfgyml, datadir, cp, fmd, n_workers):
         max_seq_len=model_args.max_seq_len,
         batch_size=cfgyml.batch_size,
         num_workers=n_workers,
-        load_cheatdata=True,
     )
     module_args = MMCModuleArgs(
         name=os.path.splitext(os.path.basename(cp))[0],
@@ -67,6 +61,7 @@ def predict(cfgyml, datadir, cp, fmd, n_workers):
         model_args=model_args,
         opening_moves=dm.opening_moves,
         NOOP=NOOP,
+        whiten_params=dm.whiten_params,
         lr_scheduler_params=cfgyml.lr_scheduler_params,
         max_steps=cfgyml.max_steps,
         val_check_steps=cfgyml.val_check_steps,
@@ -91,10 +86,7 @@ def main():
         cfgyml.batch_size = args.bs
 
     datadir = cfgyml.datadir if args.datadir is None else args.datadir
-    with open(os.path.join(datadir, "fmd.json")) as f:
-        fmd = json.load(f)
-
-    outputs = predict(cfgyml, datadir, args.cp, fmd, n_workers)
+    outputs = predict(cfgyml, datadir, args.cp, n_workers)
     report = evaluate(outputs, cfgyml.elo_edges)
     if args.report_fn is not None:
         with open(args.report_fn, "w") as f:

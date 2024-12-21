@@ -7,6 +7,19 @@ import json
 from pgn import NOOP
 
 
+from dataclasses import dataclass
+
+
+@dataclass
+class WhitenParams:
+    mean: float
+    std: float
+
+    def __init__(self, m, s):
+        self.mean = m
+        self.std = s
+
+
 def init_worker(seed):
     np.random.seed(seed)
 
@@ -274,6 +287,7 @@ class MMCDataModule(L.LightningDataModule):
         # we subtract one here so that it now represents the minimum number of moves that the
         # model must see before making its first prediction
         self.opening_moves = self.fmd["min_moves"] - 1
+        self.whiten_params = WhitenParams(self.fmd["elo_mean"], self.fmd["elo_std"])
 
     def setup(self, stage):
         if stage == "fit":

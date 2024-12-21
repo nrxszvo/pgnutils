@@ -15,6 +15,7 @@ from torch.optim.lr_scheduler import (
 )
 
 from model import ModelArgs, Transformer
+from mmcdataset import WhitenParams
 
 
 @dataclass
@@ -24,6 +25,7 @@ class MMCModuleArgs:
     model_args: ModelArgs
     opening_moves: int
     NOOP: int
+    whiten_params: WhitenParams
     lr_scheduler_params: Dict
     max_steps: int
     val_check_steps: int
@@ -42,6 +44,7 @@ class MimicChessModule(L.LightningModule):
         self.model_args = params.model_args
         self.opening_moves = params.opening_moves
         self.NOOP = params.NOOP
+        self.whiten_params = params.whiten_params
         self.val_check_steps = params.val_check_steps
         self.max_steps = params.max_steps
         self.loss = torch.nn.GaussianNLLLoss()
@@ -208,40 +211,24 @@ class MimicChessModule(L.LightningModule):
         next_token[tgt == self.NOOP] = self.NOOP
         return next_token
 
+    def _unwhiten(self, elo):
+        return self.whiten_params.std * elo + self.whiten_params.mean
+
     def predict_step(self, batch, batch_idx):
-        logits = self(batch["input"])
-        logits = self._chomp_logits(logits)
-        probs = torch.softmax(logits, dim=-2)
-        sprobs, stokens = torch.sort(probs, dim=-2, descending=True)
-        sprobs = sprobs[:, :5]
-        stokens = stokens[:, :5]
-
-        tgt = batch["w_target"]
-        tgt[:, 1::2] = batch["b_target"][:, 1::2]
-
-        _, nclass, _ = probs.shape
-        mask = F.one_hot(tgt, nclass).permute(0, 2, 1)
-        tprobs = (probs * mask).sum(dim=1)
-        cheatdata = batch["cheatdata"]
-        cheat_probs = []
-        for i, cd in enumerate(cheatdata):
-            idx = (cd[:, 0] != -1).nonzero()[:, 0]
-            cps = []
-            if len(idx) > 0:
-                seq_probs = torch.index_select(probs[i], 1, cd[idx, 0])
-                for j, offset in enumerate(cd[idx, 1]):
-                    cps.append(seq_probs[offset, j])
-            cheat_probs.append(torch.Tensor(cps))
+        exp, var = self(batch["input"])
+        exp = self._chomp_pred(exp)
+        var = self._chomp_pred(var)
+        m_pred = self._unwhiten(exp)
+        s_pred = self.whiten_params.std * (var**0.5)
+        tgt = batch["target"]
+        welos = self._unwhiten(tgt[:, 0])
+        belos = self._unwhiten(tgt[:, 1])
 
         return {
-            "sorted_tokens": stokens,
-            "sorted_probs": sprobs,
-            "target_probs": tprobs,
-            "heads": batch["heads"],
-            "openings": batch["opening"],
-            "targets": tgt.unsqueeze(1),
-            "cheat_probs": cheat_probs,
-            "cheatdata": cheatdata,
+            "mean_pred": m_pred,
+            "scale_pred": s_pred,
+            "welos": welos,
+            "belos": belos,
         }
 
     def fit(self, datamodule, ckpt=None):

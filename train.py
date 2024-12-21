@@ -86,6 +86,7 @@ def main():
             model_args,
             dm.opening_moves,
             NOOP,
+            dm.whiten_params,
             cfgyml.lr_scheduler_params,
             cfgyml.max_steps,
             cfgyml.val_check_steps,
