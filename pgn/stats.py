@@ -1,19 +1,18 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import json
 
 
 def elo_hist(
-    md,
-    welos,
-    belos,
+    elos,
     edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, float("inf")],
 ):
     x = np.arange(len(edges) - 1)
     width = 0.33
     mult = 0
     ax = plt.figure().add_subplot()
-    hw, eb = np.histogram(welos, edges)
-    hb, eb = np.histogram(belos, edges)
+    hw, eb = np.histogram(elos[:, 0], edges)
+    hb, eb = np.histogram(elos[:, 1], edges)
     for name, data in [("white", hw), ("black", hb)]:
         offset = width * mult
         rects = ax.bar(x + offset, data, width, label=name)
@@ -29,7 +28,7 @@ def elo_hist(
     plt.savefig("elos.png", dpi=500)
 
 
-def game_lengths(md, gs):
+def game_lengths(gs):
     gamelengths = np.diff(gs)
     mean = np.mean(gamelengths)
     std = np.var(gamelengths) ** 0.5
@@ -42,21 +41,17 @@ def game_lengths(md, gs):
 
 
 def load_data(npydir):
-    md = np.load(f"{npydir}/md.npy", allow_pickle=True).item()
-    gs = np.memmap(
-        f"{npydir}/gamestarts.npy", mode="r", dtype="int64", shape=md["ngames"]
+    with open(f"{npydir}/fmd.json") as f:
+        fmd = json.load(f)
+    gs = np.memmap(f"{npydir}/gs.npy", mode="r", dtype="int64", shape=fmd["ngames"])
+    elos = np.memmap(
+        f"{npydir}/elo.npy", mode="r", dtype="int16", shape=(fmd["ngames"], 2)
     )
-    welos = np.memmap(
-        f"{npydir}/welos.npy", mode="r", dtype="int16", shape=md["ngames"]
-    )
-    belos = np.memmap(
-        f"{npydir}/welos.npy", mode="r", dtype="int16", shape=md["ngames"]
-    )
-    return md, gs, welos, belos
+    return fmd, gs, elos
 
 
 if __name__ == "__main__":
     import sys
 
-    md, gs, welos, belos = load_data(sys.argv[1])
-    elo_hist(md, welos, belos)
+    fmd, gs, elos = load_data(sys.argv[1])
+    elo_hist(elos)

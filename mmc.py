@@ -174,6 +174,8 @@ class MimicChessModule(L.LightningModule):
         exp, var = self(batch["input"])
         loss = self._get_loss(exp, var, batch["target"])
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
+        self.log("expectation", exp.mean(), sync_dist=True)
+        self.log("variance", var.mean(), sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
         self.log("lr", cur_lr, prog_bar=True, sync_dist=True)
         return loss

@@ -17,6 +17,8 @@ ABSL_FLAG(int, minTime, 30, "minimum time remaining to be included in filtered d
 ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
 ABSL_FLAG(float, trainp, 0.9, "percentage of dataset for training");
 ABSL_FLAG(float, testp, 0.08, "percentage of dataset for testing");
+ABSL_FLAG(std::vector<std::string>, eloEdges, std::vector<std::string>({"1000","1200","1400","1600","1800","2000","2200","2400","2600"}), "ELO bin edges for ensuring even distribution of ELOs");
+ABSL_FLAG(int, maxGamesPerElo, 5000000, "maximum number of games per ELO group");
 
 MMCRawDataReader::MMCRawDataReader(std::string npydir) {
 	gamestarts = std::ifstream(npydir + "/gamestarts.npy", std::ios::binary);
@@ -101,13 +103,16 @@ struct Split {
 	Split(): nSamp(0), nGames(0) {};
 };
 
-void filterData(std::string& npydir, int minMoves, int minTime, std::string& outdir, float trainp, float testp) {
+
+
+void filterData(std::string& npydir, int minMoves, int minTime, std::string& outdir, float trainp, float testp, std::vector<int>& eloEdges, int maxGames) {
 	MMCRawDataReader mrd(npydir);
 	std::vector<int16_t> clk;
 	std::ofstream gsfile(outdir + "/gs.npy", std::ios::binary);
 	std::ofstream elofile(outdir + "/elo.npy", std::ios::binary);
 	std::vector<Split> splits(3);
 	std::vector<std::string> names = {"train", "test", "val"};
+	std::vector<int> eloHist(eloEdges.size()+1, 0);
 	for (int i=0; i<3; i++) {
 		splits[i].name = names[i];
 		splits[i].idxData = std::ofstream(outdir + "/" + names[i] + ".npy", std::ios::binary);
@@ -129,19 +134,44 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 
 		nGames++;
 	};
-
+	auto getEloBin = [&](int elo) {
+		for (int i=0; i<eloEdges.size(); i++) {
+			if (eloEdges[i] > elo) {
+				return i;
+			}
+		}
+		return (int)eloEdges.size();
+	};
+	
 	int nTotal = 0;
 	while (true) {
 	 	auto [bytesRead, gameStart, whiteElo, blackElo] = mrd.nextGame(clk);
 		if (bytesRead == 0) break;
+
 		nTotal++;
+		if (nTotal % 1000 == 0) {
+			std::cout << int(100*(float)nTotal/mrd.getTotalGames()) << "% done\r";
+		}
+
+		int wbin = getEloBin(whiteElo);
+		eloHist[wbin]++;
+		int bbin = getEloBin(blackElo);
+		eloHist[bbin]++;
+		if (eloHist[wbin] > maxGames || eloHist[bbin] > maxGames) continue;
+		
 		int idx = clk.size()-1;	
 		while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
 		if (idx >= minMoves) {
 			insertCoords(gameStart, idx+1, whiteElo, blackElo);
 		}
-		if (nTotal % 1000 == 0) {
-			std::cout << int(100*(float)nTotal/mrd.getTotalGames()) << "% done\r";
+
+		bool done = true;
+		for (auto count: eloHist) {
+			done = done && count >= maxGames;
+		}
+		if (done) {
+			std::cout << std::endl << "Reached max games; terminating early" << std::endl;
+			break;
 		}
 	}	
 	std::cout << "Included " << nGames << " out of " << nTotal << " games" << std::endl;
@@ -173,6 +203,12 @@ int main(int argc, char *argv[]) {
 	std::string outdir = absl::GetFlag(FLAGS_outdir);
 	float trainp = absl::GetFlag(FLAGS_trainp);
 	float testp = absl::GetFlag(FLAGS_testp);
-	filterData(npydir, minMoves, minTime, outdir, trainp, testp);
+	std::vector<std::string> eloEdgeStr = absl::GetFlag(FLAGS_eloEdges);
+	std::vector<int> eloEdges;
+	for (auto e: eloEdgeStr) {
+		eloEdges.push_back(std::stoi(e));
+	}
+	int maxGames = absl::GetFlag(FLAGS_maxGamesPerElo);
+	filterData(npydir, minMoves, minTime, outdir, trainp, testp, eloEdges, maxGames);
 	return 0;
 }
