@@ -17,6 +17,7 @@ class ModelArgs:
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
     vocab_size: int = 2048
+    n_elo_groups: int = 10
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
     norm_eps: float = 1e-5
@@ -218,8 +219,7 @@ class Transformer(nn.Module):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.expout = nn.Linear(params.dim, 1, bias=False)
-        self.varout = nn.Linear(params.dim, 1, bias=False)
+        self.output = nn.Linear(params.dim, params.n_elo_groups, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -242,6 +242,4 @@ class Transformer(nn.Module):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        exp = self.expout(h).float().squeeze(-1)
-        var = F.relu(self.varout(h).float()).squeeze(-1)
-        return exp, var
+        return self.output(h).float().squeeze(-1)

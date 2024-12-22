@@ -7,40 +7,27 @@ import json
 from pgn import NOOP
 
 
-from dataclasses import dataclass
-
-
-@dataclass
-class WhitenParams:
-    mean: float
-    std: float
-
-    def __init__(self, m, s):
-        self.mean = m
-        self.std = s
-
-
 def init_worker(seed):
     np.random.seed(seed)
 
 
 def collate_fn(batch):
-    mininp = float("inf")
+    maxinp = 0
     openmoves = batch[0]["opening"].shape[0]
     for d in batch:
-        mininp = min(mininp, d["n_inp"])
+        maxinp = max(maxinp, d["n_inp"])
 
-    mintgt = mininp + 1 - openmoves
+    maxtgt = maxinp + 1 - openmoves
     bs = len(batch)
-    inputs = torch.full((bs, mininp), NOOP, dtype=torch.int32)
+    inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
-    targets = torch.full((bs, mintgt), NOOP, dtype=torch.float32)
+    targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
 
     for i, d in enumerate(batch):
         inp = d["input"]
         tgt = d["target"]
-        inputs[i] = torch.from_numpy(inp[:mininp])
-        targets[i] = torch.from_numpy(tgt[:mintgt])
+        inputs[i, : inp.shape[0]] = torch.from_numpy(inp)
+        targets[i, : tgt.shape[0]] = torch.from_numpy(tgt)
         openings[i] = torch.from_numpy(d["opening"])
 
     return {
@@ -140,11 +127,11 @@ class MMCDataset(Dataset):
         opening = np.empty(self.opening_moves, dtype="int64")
         opening[:] = self.mvids[gs : gs + self.opening_moves]
 
-        tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="float32")
+        tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
         # tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
         welo, belo = self.elos[gidx]
-        tgt[::2] = welo
-        tgt[1::2] = belo
+        tgt[::2] = self._get_group(welo)
+        tgt[1::2] = self._get_group(belo)
 
         return {
             "input": inp,
@@ -232,9 +219,9 @@ def load_data(dirname, load_cheatdata=False):
             shape=md["nmoves"],
         ),
         "elos": np.memmap(
-            os.path.join(dirname, "whitened_elos.npy"),
+            os.path.join(dirname, "elo.npy"),
             mode="r",
-            dtype="float32",
+            dtype="int16",
             shape=(fmd["ngames"], 2),
         ),
         "train": np.memmap(
@@ -287,7 +274,6 @@ class MMCDataModule(L.LightningDataModule):
         # we subtract one here so that it now represents the minimum number of moves that the
         # model must see before making its first prediction
         self.opening_moves = self.fmd["min_moves"] - 1
-        self.whiten_params = WhitenParams(self.fmd["elo_mean"], self.fmd["elo_std"])
 
     def setup(self, stage):
         if stage == "fit":

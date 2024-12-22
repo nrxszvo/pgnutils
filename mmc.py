@@ -15,7 +15,6 @@ from torch.optim.lr_scheduler import (
 )
 
 from model import ModelArgs, Transformer
-from mmcdataset import WhitenParams
 
 
 @dataclass
@@ -25,7 +24,6 @@ class MMCModuleArgs:
     model_args: ModelArgs
     opening_moves: int
     NOOP: int
-    whiten_params: WhitenParams
     lr_scheduler_params: Dict
     max_steps: int
     val_check_steps: int
@@ -44,10 +42,9 @@ class MimicChessModule(L.LightningModule):
         self.model_args = params.model_args
         self.opening_moves = params.opening_moves
         self.NOOP = params.NOOP
-        self.whiten_params = params.whiten_params
         self.val_check_steps = params.val_check_steps
         self.max_steps = params.max_steps
-        self.loss = torch.nn.GaussianNLLLoss()
+        self.loss = F.cross_entropy
         if params.name:
             logger = TensorBoardLogger(".", name="L", version=params.name)
         else:
@@ -166,26 +163,24 @@ class MimicChessModule(L.LightningModule):
         return self.model(tokens)
 
     def _chomp_pred(self, pred):
-        return pred[:, self.opening_moves - 1 :]
+        pred = pred.permute(0, 2, 1)
+        return pred[:, :, self.opening_moves - 1 :]
 
-    def _get_loss(self, exp, var, target):
-        exp = self._chomp_pred(exp)
-        var = self._chomp_pred(var)
-        return self.loss(exp, target, var)
+    def _get_loss(self, logits, target):
+        logits = self._chomp_pred(logits)
+        return self.loss(logits, target, ignore_index=self.NOOP)
 
     def training_step(self, batch, batch_idx):
-        exp, var = self(batch["input"])
-        loss = self._get_loss(exp, var, batch["target"])
+        logits = self(batch["input"])
+        loss = self._get_loss(logits, batch["target"])
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
-        self.log("expectation", exp.mean(), sync_dist=True)
-        self.log("variance", var.mean(), sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
         self.log("lr", cur_lr, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        exp, var = self(batch["input"])
-        valid_loss = self._get_loss(exp, var, batch["target"])
+        logits = self(batch["input"])
+        valid_loss = self._get_loss(logits, batch["target"])
 
         if torch.isnan(valid_loss):
             raise Exception("Loss is NaN, training stopped.")
@@ -211,24 +206,37 @@ class MimicChessModule(L.LightningModule):
         next_token[tgt == self.NOOP] = self.NOOP
         return next_token
 
-    def _unwhiten(self, elo):
-        return self.whiten_params.std * elo + self.whiten_params.mean
-
     def predict_step(self, batch, batch_idx):
-        exp, var = self(batch["input"])
-        exp = self._chomp_pred(exp)
-        var = self._chomp_pred(var)
-        m_pred = self._unwhiten(exp)
-        s_pred = self.whiten_params.std * (var**0.5)
-        tgt = batch["target"]
-        welos = self._unwhiten(tgt[:, 0])
-        belos = self._unwhiten(tgt[:, 1])
+        logits = self(batch["input"])
+        logits = self._chomp_pred(logits)
+        probs = torch.softmax(logits, dim=1)
+
+        sprobs, sgrps = torch.sort(probs, dim=1, descending=True)
+        sprobs = sprobs[:, :5]
+        sgrps = sgrps[:, :5]
+
+        tgts = batch["target"]
+        wtgt = tgts[:, 0]
+        btgt = tgts[:, 1]
+        _, nclass, _ = probs.shape
+
+        tprobs = torch.empty_like(probs)
+        adjprobs = torch.empty_like(probs)
+        for i, tgt in enumerate([wtgt, btgt]):
+            mask = F.one_hot(tgt, nclass).unsqueeze(-1)
+            lo = F.one_hot(torch.clamp(tgt - 1, min=0), nclass).unsqueeze(-1)
+            hi = F.one_hot(torch.clamp(tgt + 1, max=nclass - 1), nclass).unsqueeze(-1)
+            tprobs[:, :, i::2] = probs[:, :, i::2] * mask
+            adjprobs[:, :, i::2] = probs[:, :, i::2] * (mask + lo + hi)
+        tprobs = tprobs.sum(dim=1)
+        adjprobs = adjprobs.sum(dim=1)
 
         return {
-            "mean_pred": m_pred,
-            "scale_pred": s_pred,
-            "welos": welos,
-            "belos": belos,
+            "sorted_probs": sprobs,
+            "sorted_groups": sgrps,
+            "target_probs": tprobs,
+            "adjacent_probs": adjprobs,
+            "target_groups": tgts,
         }
 
     def fit(self, datamodule, ckpt=None):

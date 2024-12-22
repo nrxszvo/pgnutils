@@ -31,44 +31,46 @@ class LegalGameStats:
         return lines
 
 
-class MoveStats:
-    def __init__(self, elo_edges, ns=[1, 3, 5]):
-        self.edges = elo_edges
-        self.nheads = len(elo_edges)
-        self.stats = [{"n": n, "matches": [0] * self.nheads} for n in ns]
-        self.total_preds = [0] * self.nheads
+class TargetStats:
+    def __init__(self):
+        self.total_preds = 0
+        self.sum_t = 0
+        self.sum_adj = 0
 
-    def eval(self, tokens, heads, tgts):
-        for i in range(self.nheads):
-            for j in range(heads.shape[1]):
-                idx = (heads[:, j] == i).nonzero()[:, 0]
-                itgts = torch.index_select(tgts, 0, idx)
-                self.total_preds[i] += (itgts[:, 0, i::2] != NOOP).sum()
+    def eval(self, tprobs, adjprobs, tgts):
+        tprobs[tgts == NOOP] = 0
+        adjprobs[tgts == NOOP] = 0
+        self.sum_t += tprobs.sum()
+        self.sum_adj += adjprobs.sum()
+        self.total_preds += (tgts != NOOP).sum()
 
+    def report(self):
+        return [
+            f"Mean target probability: {100*self.sum_t/self.total_preds:.2f}%",
+            f"Mean adjacent probability: {100*self.sum_adj/self.total_preds:.2f}%",
+        ]
+
+
+class AccuracyStats:
+    def __init__(self, min_prob, ns=[1, 3]):
+        self.stats = [{"n": n, "matches": 0} for n in ns]
+        self.min_prob = min_prob
+        self.total_preds = 0
+
+    def eval(self, tokens, probs, tgts):
+        tokens[probs < self.min_prob] = -1
         for s in self.stats:
-            move_matches = (tokens[:, : s["n"]] == tgts).sum(dim=1, keepdim=True)
+            move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
             move_matches[tgts == NOOP] = 0
-            for i in range(self.nheads):
-                for j in range(heads.shape[1]):
-                    idx = (heads[:, j] == i).nonzero()[:, 0]
-                    imatches = torch.index_select(move_matches, 0, idx)
-                    s["matches"][i] += imatches[:, 0, i::2].sum()
+            s["matches"] += move_matches.sum()
+            self.total_preds += (tgts != NOOP).sum()
 
     def report(self):
         lines = []
         for s in self.stats:
-            tpred = 0
-            tmatch = 0
-            lines.append(f'Top {s["n"]} accuracy:')
-            for i in range(self.nheads):
-                if self.total_preds[i] > 0:
-                    e = self.edges[i]
-                    lines.append(
-                        f"\t{e}: {100*s['matches'][i]/self.total_preds[i]:.2f}%"
-                    )
-                    tpred += self.total_preds[i]
-                    tmatch += s["matches"][i]
-            lines.append(f"\tOverall: {100*tmatch/tpred:.2f}%")
+            lines.append(
+                f"Top {s['n']} accuracy: {100*s['matches']/self.total_preds:.2f}%"
+            )
         return lines
 
 

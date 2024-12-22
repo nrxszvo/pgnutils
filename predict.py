@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 
 import torch
@@ -8,6 +7,7 @@ from config import get_config
 from mmc import MimicChessModule, MMCModuleArgs
 from mmcdataset import NOOP, MMCDataModule
 from model import ModelArgs
+from utils import AccuracyStats, TargetStats
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
@@ -26,28 +26,20 @@ parser.add_argument(
 @torch.inference_mode()
 def evaluate(outputs, elo_edges):
     nbatch = len(outputs)
-    mean_err = 0
-    mean_scale = 0
-    n_pred = 0
-    breakpoint()
+    acc_stats = AccuracyStats(min_prob=2 / len(elo_edges))
+    tstats = TargetStats()
     for i, d in enumerate(outputs):
         print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-        m_pred = d["mean_pred"]
-        s_pred = d["scale_pred"]
-        welos = d["welos"].unsqueeze(-1)
-        belos = d["belos"].unsqueeze(-1)
-        mean_err += ((m_pred[:, ::2] - welos) ** 2).sum() + (
-            (m_pred[:, 1::2] - belos) ** 2
-        ).sum()
-        mean_scale += s_pred.sum()
-        n_pred += m_pred.numel()
+        acc_stats.eval(d["sorted_groups"], d["sorted_probs"], d["target_groups"])
+        tstats.eval(d["target_probs"], d["adjacent_probs"], d["target_groups"])
     print()
-    print(f"Mean RMS: {(mean_err/n_pred)**0.5:.1f}")
-    print(f"Mean scale prediction: {mean_scale/n_pred:.2f}")
+    for line in acc_stats.report() + tstats.report():
+        print(line)
 
 
 def predict(cfgyml, datadir, cp, n_workers):
     model_args = ModelArgs(cfgyml.model_args)
+    model_args.n_elo_groups = len(cfgyml.elo_edges) + 1
     dm = MMCDataModule(
         datadir=datadir,
         elo_edges=cfgyml.elo_edges,
@@ -61,7 +53,6 @@ def predict(cfgyml, datadir, cp, n_workers):
         model_args=model_args,
         opening_moves=dm.opening_moves,
         NOOP=NOOP,
-        whiten_params=dm.whiten_params,
         lr_scheduler_params=cfgyml.lr_scheduler_params,
         max_steps=cfgyml.max_steps,
         val_check_steps=cfgyml.val_check_steps,
