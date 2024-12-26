@@ -24,9 +24,9 @@ parser.add_argument(
 
 
 @torch.inference_mode()
-def evaluate(outputs, elo_edges):
+def evaluate(outputs, seq_len, elo_edges):
     nbatch = len(outputs)
-    acc_stats = AccuracyStats(min_prob=2 / len(elo_edges))
+    acc_stats = AccuracyStats(seq_len, min_prob=2 / len(elo_edges))
     tstats = TargetStats()
     for i, d in enumerate(outputs):
         print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
@@ -61,7 +61,7 @@ def predict(cfgyml, datadir, cp, n_workers):
         devices=1,
     )
     mmc = MimicChessModule.load_from_checkpoint(cp, params=module_args)
-    return mmc.predict(dm)
+    return mmc.predict(dm), dm.max_seq_len - dm.opening_moves + 1
 
 
 def main():
@@ -77,8 +77,8 @@ def main():
         cfgyml.batch_size = args.bs
 
     datadir = cfgyml.datadir if args.datadir is None else args.datadir
-    outputs = predict(cfgyml, datadir, args.cp, n_workers)
-    report = evaluate(outputs, cfgyml.elo_edges)
+    outputs, seq_len = predict(cfgyml, datadir, args.cp, n_workers)
+    report = evaluate(outputs, seq_len, cfgyml.elo_edges)
     if args.report_fn is not None:
         with open(args.report_fn, "w") as f:
             f.write("\n".join(report))

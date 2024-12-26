@@ -1,4 +1,4 @@
-import torch
+import numpy as np
 from pgn.py.lib.reconstruct import count_invalid
 from mmcdataset import NOOP
 
@@ -52,25 +52,28 @@ class TargetStats:
 
 
 class AccuracyStats:
-    def __init__(self, min_prob, ns=[1, 3]):
-        self.stats = [{"n": n, "matches": 0} for n in ns]
+    def __init__(self, seq_len, min_prob, ns=[1, 3]):
+        self.stats = [{"n": n, "matches": np.zeros(seq_len)} for n in ns]
         self.min_prob = min_prob
-        self.total_preds = 0
+        self.total_preds = np.zeros(seq_len)
 
     def eval(self, tokens, probs, tgts):
         tokens[probs < self.min_prob] = -1
         for s in self.stats:
             move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
             move_matches[tgts == NOOP] = 0
-            s["matches"] += move_matches.sum()
-            self.total_preds += (tgts != NOOP).sum()
+            s["matches"] += move_matches.sum(dim=0).numpy()
+        self.total_preds += (tgts != NOOP).sum(dim=0).numpy()
 
     def report(self):
         lines = []
         for s in self.stats:
-            lines.append(
-                f"Top {s['n']} accuracy: {100*s['matches']/self.total_preds:.2f}%"
-            )
+            acc = 100 * s["matches"] / self.total_preds
+            lines.append(f"Top {s['n']} accuracy:")
+            for i, v in enumerate(self.total_preds):
+                if v > 0:
+                    acc = 100 * s["matches"][i] / v
+                    lines.append(f"\t{i}: {acc:.2f}%")
         return lines
 
 

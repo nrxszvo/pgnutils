@@ -219,7 +219,6 @@ class MimicChessModule(L.LightningModule):
         wtgt = tgts[:, 0]
         btgt = tgts[:, 1]
         _, nclass, _ = probs.shape
-
         tprobs = torch.empty_like(probs)
         adjprobs = torch.empty_like(probs)
         for i, tgt in enumerate([wtgt, btgt]):
