@@ -1,5 +1,5 @@
 CONDA_VER=latest
-OS_TYPE=x86_64
+OS_TYPE=$(uname -i)
 CONDA_DIR=${HOME}/miniconda
 PY_VER=3.10
 cd ${HOME} 

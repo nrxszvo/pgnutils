@@ -100,12 +100,16 @@ class MMCDataset(Dataset):
         mvids,
         elos,
         elo_edges,
+        max_nsamp=None,
     ):
         super().__init__()
         self.seq_len = seq_len
         self.opening_moves = opening_moves
         self.indices = indices
         self.nsamp = len(self.indices)
+        if max_nsamp is not None:
+            self.nsamp = min(max_nsamp, self.nsamp)
+
         self.mvids = mvids
         self.elos = elos
         self.elo_edges = elo_edges
@@ -260,6 +264,7 @@ class MMCDataModule(L.LightningDataModule):
         batch_size,
         num_workers,
         load_cheatdata=False,
+        max_testsamp=None,
     ):
         super().__init__()
         self.max_seq_len = max_seq_len
@@ -274,6 +279,7 @@ class MMCDataModule(L.LightningDataModule):
         # we subtract one here so that it now represents the minimum number of moves that the
         # model must see before making its first prediction
         self.opening_moves = self.fmd["min_moves"] - 1
+        self.max_testsamp = max_testsamp
 
     def setup(self, stage):
         if stage == "fit":
@@ -313,6 +319,7 @@ class MMCDataModule(L.LightningDataModule):
                     self.mvids,
                     self.elos,
                     self.elo_edges,
+                    self.max_testsamp,
                 )
             else:
                 self.testset = MMCDataset(
@@ -322,6 +329,7 @@ class MMCDataModule(L.LightningDataModule):
                     self.mvids,
                     self.elos,
                     self.elo_edges,
+                    self.max_testsamp,
                 )
 
     def train_dataloader(self):

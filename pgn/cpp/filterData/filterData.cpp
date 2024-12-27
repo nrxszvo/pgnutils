@@ -154,10 +154,10 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		}
 
 		int wbin = getEloBin(whiteElo);
-		eloHist[wbin]++;
 		int bbin = getEloBin(blackElo);
-		eloHist[bbin]++;
-		if (eloHist[wbin] > maxGames || eloHist[bbin] > maxGames) continue;
+		if (eloHist[wbin] == maxGames || eloHist[bbin] == maxGames) continue;
+		eloHist[wbin]++;
+		if (bbin != wbin) eloHist[bbin]++;
 		
 		int idx = clk.size()-1;	
 		while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
@@ -175,7 +175,9 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		}
 	}	
 	std::cout << "Included " << nGames << " out of " << nTotal << " games" << std::endl;
-	
+	for (int i=0; i<eloEdges.size(); i++) std::cout << "Elo <" << eloEdges[i] << ": " << eloHist[i] << std::endl;	
+	std::cout << "Elo >" << eloEdges[eloEdges.size()-1] << ": " << eloHist[eloEdges.size()] << std::endl;
+
 	gsfile.close();
 	elofile.close();
 

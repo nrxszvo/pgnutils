@@ -56,9 +56,15 @@ class AccuracyStats:
         self.stats = [{"n": n, "matches": np.zeros(seq_len)} for n in ns]
         self.min_prob = min_prob
         self.total_preds = np.zeros(seq_len)
+        self.histo = np.zeros(10)
 
     def eval(self, tokens, probs, tgts):
         tokens[probs < self.min_prob] = -1
+        for i in range(tgts.shape[0]):
+            self.histo[tgts[i, 0]] += 1
+            if tgts[i, 1] != tgts[i, 0]:
+                self.histo[tgts[i, 1]] += 1
+
         for s in self.stats:
             move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
             move_matches[tgts == NOOP] = 0
@@ -74,6 +80,9 @@ class AccuracyStats:
                 if v > 0:
                     acc = 100 * s["matches"][i] / v
                     lines.append(f"\t{i}: {acc:.2f}%")
+        for i in range(len(self.histo)):
+            lines.append(f"Elo group {i}: {self.histo[i]}")
+
         return lines
 
 

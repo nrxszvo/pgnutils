@@ -21,6 +21,12 @@ parser.add_argument("--bs", default=None, type=int, help="batch size")
 parser.add_argument(
     "--report_fn", default=None, help="text file to write summary results"
 )
+parser.add_argument(
+    "--nsamp",
+    default=None,
+    help="maximum number of samples (games) to process",
+    type=int,
+)
 
 
 @torch.inference_mode()
@@ -37,7 +43,7 @@ def evaluate(outputs, seq_len, elo_edges):
         print(line)
 
 
-def predict(cfgyml, datadir, cp, n_workers):
+def predict(cfgyml, datadir, cp, n_workers, n_samp):
     model_args = ModelArgs(cfgyml.model_args)
     model_args.n_elo_groups = len(cfgyml.elo_edges) + 1
     dm = MMCDataModule(
@@ -46,6 +52,7 @@ def predict(cfgyml, datadir, cp, n_workers):
         max_seq_len=model_args.max_seq_len,
         batch_size=cfgyml.batch_size,
         num_workers=n_workers,
+        max_testsamp=n_samp,
     )
     module_args = MMCModuleArgs(
         name=os.path.splitext(os.path.basename(cp))[0],
@@ -77,7 +84,7 @@ def main():
         cfgyml.batch_size = args.bs
 
     datadir = cfgyml.datadir if args.datadir is None else args.datadir
-    outputs, seq_len = predict(cfgyml, datadir, args.cp, n_workers)
+    outputs, seq_len = predict(cfgyml, datadir, args.cp, n_workers, args.nsamp)
     report = evaluate(outputs, seq_len, cfgyml.elo_edges)
     if args.report_fn is not None:
         with open(args.report_fn, "w") as f:
