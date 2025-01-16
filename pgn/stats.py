@@ -2,6 +2,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+def elo_matrix(
+    md,
+    welos,
+    belos,
+    edges=np.array(
+        [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 10000], dtype="float32"
+    ),
+):
+    def get_bins(elos):
+        diff_mtx = np.subtract.outer(elos, edges)
+        diff_mtx[diff_mtx > 0] = float("-inf")
+        idx = diff_mtx.argmax(axis=1)
+        return idx
+
+    def get_mtx_idx(welos, belos):
+        wbin = get_bins(welos)
+        bbin = get_bins(belos)
+        return len(edges) * wbin + bbin
+
+    breakpoint()
+    indices = get_mtx_idx(welos, belos)
+    print(indices)
+
+
 def elo_hist(
     md,
     welos,
@@ -12,6 +36,7 @@ def elo_hist(
     width = 0.33
     mult = 0
     ax = plt.figure().add_subplot()
+    breakpoint()
     hw, eb = np.histogram(welos, edges)
     hb, eb = np.histogram(belos, edges)
     for name, data in [("white", hw), ("black", hb)]:
@@ -59,4 +84,4 @@ if __name__ == "__main__":
     import sys
 
     md, gs, welos, belos = load_data(sys.argv[1])
-    elo_hist(md, welos, belos)
+    elo_matrix(md, welos, belos)
