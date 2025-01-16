@@ -45,7 +45,7 @@ fi
 
 cd git/mimicChess
 if [ "$OS_TYPE" = "aarch64" ]; then
-	conda install anaconda::python=3.10
+	conda install -y anaconda::python=3.10
 	sudo apt install gh
 	gh auth login --with-token < ~/.ghtoken
 	gh run download 12783586296 -R pytorch/pytorch --name manywheel-py3_10-cuda-aarch64
