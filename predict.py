@@ -32,10 +32,10 @@ parser.add_argument(
 @torch.inference_mode()
 def evaluate(outputs, seq_len, elo_edges):
     nbatch = len(outputs)
-    acc_stats = AccuracyStats(seq_len, min_prob=2 / len(elo_edges))
+    acc_stats = AccuracyStats(seq_len, len(elo_edges), 2 / len(elo_edges))
     tstats = TargetStats()
     for i, d in enumerate(outputs):
-        print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
+        print(f"Evaluation {int(100 * i / nbatch)}% done", end="\r")
         acc_stats.eval(d["sorted_groups"], d["sorted_probs"], d["target_groups"])
         tstats.eval(d["target_probs"], d["adjacent_probs"], d["target_groups"])
     print()
@@ -76,7 +76,7 @@ def main():
     cfgfn = args.cfg
     cfgyml = get_config(cfgfn)
 
-    n_workers = os.cpu_count() - 1
+    n_workers = 0  # os.cpu_count() - 1
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
 

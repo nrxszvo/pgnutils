@@ -23,10 +23,10 @@ class LegalGameStats:
     def report(self):
         lines = []
         lines.append(
-            f"Legal game frequency: {100*self.nvalid_games/self.ntotal_games:.3f}%"
+            f"Legal game frequency: {100 * self.nvalid_games / self.ntotal_games:.3f}%"
         )
         lines.append(
-            f"Legal move frequency: {100*self.nvalid_moves/self.ntotal_moves:.3f}%"
+            f"Legal move frequency: {100 * self.nvalid_moves / self.ntotal_moves:.3f}%"
         )
         return lines
 
@@ -46,24 +46,22 @@ class TargetStats:
 
     def report(self):
         return [
-            f"Mean target probability: {100*self.sum_t/self.total_preds:.2f}%",
-            f"Mean adjacent probability: {100*self.sum_adj/self.total_preds:.2f}%",
+            f"Mean target probability: {100 * self.sum_t / self.total_preds:.2f}%",
+            f"Mean adjacent probability: {100 * self.sum_adj / self.total_preds:.2f}%",
         ]
 
 
 class AccuracyStats:
-    def __init__(self, seq_len, min_prob, ns=[1, 3]):
+    def __init__(self, seq_len, n_groups, min_prob, ns=[1, 3]):
         self.stats = [{"n": n, "matches": np.zeros(seq_len)} for n in ns]
         self.min_prob = min_prob
         self.total_preds = np.zeros(seq_len)
-        self.histo = np.zeros(10)
+        self.histo = np.zeros((n_groups, n_groups))
 
     def eval(self, tokens, probs, tgts):
         tokens[probs < self.min_prob] = -1
         for i in range(tgts.shape[0]):
-            self.histo[tgts[i, 0]] += 1
-            if tgts[i, 1] != tgts[i, 0]:
-                self.histo[tgts[i, 1]] += 1
+            self.histo[tgts[i, 0], tgts[i, 1]] += 1
 
         for s in self.stats:
             move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
@@ -80,8 +78,12 @@ class AccuracyStats:
                 if v > 0:
                     acc = 100 * s["matches"][i] / v
                     lines.append(f"\t{i}: {acc:.2f}%")
-        for i in range(len(self.histo)):
-            lines.append(f"Elo group {i}: {self.histo[i]}")
+        lines.append("Elo histogram:")
+        for wbin, row in enumerate(reversed(self.histo)):
+            rowstr = "  "
+            for bbin, n in enumerate(row):
+                rowstr += f"{n}".rjust(10)
+            lines.append(rowstr)
 
         return lines
 
@@ -117,10 +119,10 @@ class CheatStats:
             lines.append(f"\tElo < {stats.elo}")
             if stats.below[1] > 0:
                 lines.append(
-                    f"\t\tstockfish < target: {stats.below[0]/stats.below[1]:.4f} ({stats.below[1]} total moves)"
+                    f"\t\tstockfish < target: {stats.below[0] / stats.below[1]:.4f} ({stats.below[1]} total moves)"
                 )
             if stats.above[1] > 0:
                 lines.append(
-                    f"\t\tstockfish > target: {stats.above[0]/stats.above[1]:.4f} ({stats.above[1]} total moves)"
+                    f"\t\tstockfish > target: {stats.above[0] / stats.above[1]:.4f} ({stats.above[1]} total moves)"
                 )
         return lines
