@@ -21,7 +21,7 @@ myemail = f'\\"{args.myemail}\\"'
 with open(args.tokenfile) as f:
     token = f'\\"{f.readline().rstrip()}\\"'
 
-scpcmd = f"scp provision.sh {args.remote}:~"
+scpcmd = f"scp provision.sh {args.remote}:~; scp ~/.ghtoken {args.remote}:~"
 sshcmd = f'ssh {args.remote} "chmod 755 provision.sh; GHTOKEN={token} MYNAME={myname} MYEMAIL={myemail} sh provision.sh"'
 cmd = f"{scpcmd} && {sshcmd}"
 print("\t" + cmd)
