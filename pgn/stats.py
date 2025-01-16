@@ -3,12 +3,7 @@ import matplotlib.pyplot as plt
 
 
 def elo_matrix(
-    md,
-    welos,
-    belos,
-    edges=np.array(
-        [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 10000], dtype="float32"
-    ),
+    md, welos, belos, edges=[1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
 ):
     def get_bins(elos):
         diff_mtx = np.subtract.outer(elos, edges)
@@ -19,11 +14,21 @@ def elo_matrix(
     def get_mtx_idx(welos, belos):
         wbin = get_bins(welos)
         bbin = get_bins(belos)
-        return len(edges) * wbin + bbin
+        mtx = np.zeros((len(edges), len(edges)))
+        for m, n in zip(wbin, bbin):
+            mtx[m, n] += 1
+        return mtx
 
-    breakpoint()
-    indices = get_mtx_idx(welos, belos)
-    print(indices)
+    maxelo = max(welos.max(), belos.max())
+    edges.append(maxelo + 1)
+    H, w_edges, b_edges = np.histogram2d(welos, belos, bins=(edges, edges))
+    fig, ax = plt.subplots()
+    ax.pcolormesh(w_edges, b_edges, np.log10(H.T), cmap="rainbow")
+    plt.savefig("elo_matrix.png", dpi=500)
+    for row in reversed(np.log10(H)):
+        for c in row:
+            print(f"{c:.2f}", end="   ")
+        print()
 
 
 def elo_hist(
@@ -75,7 +80,7 @@ def load_data(npydir):
         f"{npydir}/welos.npy", mode="r", dtype="int16", shape=md["ngames"]
     )
     belos = np.memmap(
-        f"{npydir}/welos.npy", mode="r", dtype="int16", shape=md["ngames"]
+        f"{npydir}/belos.npy", mode="r", dtype="int16", shape=md["ngames"]
     )
     return md, gs, welos, belos
 
