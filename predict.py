@@ -76,7 +76,7 @@ def main():
     cfgfn = args.cfg
     cfgyml = get_config(cfgfn)
 
-    n_workers = 0  # os.cpu_count() - 1
+    n_workers = os.cpu_count() - 1
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
 

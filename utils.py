@@ -57,32 +57,54 @@ class AccuracyStats:
         self.min_prob = min_prob
         self.total_preds = np.zeros(seq_len)
         self.histo = np.zeros((n_groups, n_groups))
+        self.acc_mtx = np.zeros((n_groups, n_groups))
+        self.move_mtx = np.zeros((n_groups, n_groups))
 
     def eval(self, tokens, probs, tgts):
         tokens[probs < self.min_prob] = -1
         for i in range(tgts.shape[0]):
             self.histo[tgts[i, 0], tgts[i, 1]] += 1
 
+        npred = (tgts != NOOP).sum(dim=0).numpy()
+        self.total_preds += npred
         for s in self.stats:
             move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
             move_matches[tgts == NOOP] = 0
             s["matches"] += move_matches.sum(dim=0).numpy()
-        self.total_preds += (tgts != NOOP).sum(dim=0).numpy()
+            for i in range(tgts.shape[0]):
+                self.acc_mtx[tgts[i, 0], tgts[i, 1]] += move_matches[i].sum()
+                self.move_mtx[tgts[i, 0], tgts[i, 1]] += (tgts[i] != NOOP).sum()
 
     def report(self):
         lines = []
         for s in self.stats:
-            acc = 100 * s["matches"] / self.total_preds
             lines.append(f"Top {s['n']} accuracy:")
             for i, v in enumerate(self.total_preds):
+                if i % 10 == 0:
+                    cum_acc = 0
+                    cum_v = 0
                 if v > 0:
-                    acc = 100 * s["matches"][i] / v
-                    lines.append(f"\t{i}: {acc:.2f}%")
+                    cum_acc += s["matches"][i]
+                    cum_v += v
+                if i % 10 == 9 or i == len(self.total_preds) - 1:
+                    lines.append(f"\t{10 * int(i / 10)}: {100 * cum_acc / cum_v:.1f}%")
         lines.append("Elo histogram:")
         for wbin, row in enumerate(reversed(self.histo)):
             rowstr = "  "
             for bbin, n in enumerate(row):
                 rowstr += f"{n}".rjust(10)
+            lines.append(rowstr)
+
+        lines.append("Accuracy Matrix:")
+        for wbin, acc_row in reversed(list(enumerate(self.acc_mtx))):
+            rowstr = "  "
+            n_row = self.move_mtx[wbin]
+            for bbin, (cum_acc, N) in enumerate(zip(acc_row, n_row)):
+                if N > 0:
+                    acc = cum_acc / N
+                    rowstr += f"{100 * acc:.1f}".rjust(10)
+                else:
+                    rowstr += "- ".rjust(10)
             lines.append(rowstr)
 
         return lines
