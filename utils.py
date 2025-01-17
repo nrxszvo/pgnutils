@@ -78,45 +78,52 @@ class AccuracyStats:
             self.acc_mtx[tgts[i, 0], tgts[i, 1]] += move_matches[i].sum()
             self.move_mtx[tgts[i, 0], tgts[i, 1]] += (tgts[i] != NOOP).sum()
 
-    def report(self):
+    def report(self, SEQ_AVG=10):
         lines = []
         for s in self.stats:
             lines.append(f"Top {s['n']} accuracy:")
             for i, v in enumerate(self.total_preds):
-                if i % 10 == 0:
+                if i % SEQ_AVG == 0:
                     cum_acc = 0
                     cum_v = 0
                 if v > 0:
                     cum_acc += s["matches"][i]
                     cum_v += v
-                if i % 10 == 9 or i == len(self.total_preds) - 1:
-                    lines.append(f"\t{10 * int(i / 10)}: {100 * cum_acc / cum_v:.1f}%")
+                if i % SEQ_AVG == (SEQ_AVG - 1) or i == len(self.total_preds) - 1:
+                    lines.append(
+                        f"\t{SEQ_AVG * int(i / SEQ_AVG)}: {100 * cum_acc / cum_v:.1f}%"
+                    )
+
+        def gen_mtx_report(mtx, fn, COLWIDTH=10):
+            lines.append("")
+            for wbin, row in reversed(list(enumerate(mtx))):
+                rowstr = f"{self.elo_edges[wbin]}".rjust(COLWIDTH)
+                for bbin, n in enumerate(row):
+                    rowstr += fn(n, wbin, bbin).rjust(COLWIDTH)
+                lines.append(rowstr)
+                lines.append("")
+            ax = "".rjust(COLWIDTH)
+            for e in self.elo_edges:
+                ax += f"{e}".rjust(COLWIDTH)
+            lines.append(ax)
+            lines.append("")
+
         lines.append("Elo histogram:")
-        for wbin, row in enumerate(reversed(self.histo)):
-            rowstr = f"{self.elo_edges[wbin]}".rjust(10)
-            for bbin, n in enumerate(row):
-                rowstr += f"{n}".rjust(10)
-            lines.append(rowstr)
-        ax = ""
-        for e in self.elo_edges:
-            ax += e.rjust(10)
-        lines.append(ax)
+        gen_mtx_report(self.histo, lambda data, *args: f"{int(data)}")
 
         lines.append("Accuracy Matrix:")
-        for wbin, acc_row in reversed(list(enumerate(self.acc_mtx))):
-            rowstr = f"{self.elo_edges[wbin]}".rjust(10)
+
+        def fmt_acc(cum_acc, wbin, bbin):
             n_row = self.move_mtx[wbin]
-            for bbin, (cum_acc, N) in enumerate(zip(acc_row, n_row)):
-                if N > 0:
-                    acc = cum_acc / N
-                    rowstr += f"{100 * acc:.1f}".rjust(10)
-                else:
-                    rowstr += "- ".rjust(10)
-            lines.append(rowstr)
-        ax = ""
-        for e in self.elo_edges:
-            ax += e.rjust(10)
-        lines.append(ax)
+            N = n_row[bbin]
+            if N > 0:
+                acc = cum_acc / N
+                acc_str = f"{100 * acc:.1f}"
+            else:
+                acc_str = "- "
+            return acc_str
+
+        gen_mtx_report(self.acc_mtx, fmt_acc)
 
         return lines
 

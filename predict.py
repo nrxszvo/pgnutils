@@ -38,9 +38,8 @@ def evaluate(outputs, seq_len, elo_edges):
         print(f"Evaluation {int(100 * i / nbatch)}% done", end="\r")
         acc_stats.eval(d["sorted_groups"], d["sorted_probs"], d["target_groups"])
         tstats.eval(d["target_probs"], d["adjacent_probs"], d["target_groups"])
-    print()
-    for line in acc_stats.report() + tstats.report():
-        print(line)
+    report = acc_stats.report() + tstats.report()
+    return report
 
 
 def predict(cfgyml, datadir, cp, n_workers, n_samp):
@@ -86,6 +85,9 @@ def main():
     datadir = cfgyml.datadir if args.datadir is None else args.datadir
     outputs, seq_len = predict(cfgyml, datadir, args.cp, n_workers, args.nsamp)
     report = evaluate(outputs, seq_len, cfgyml.elo_edges)
+    print()
+    for line in report:
+        print(line)
     if args.report_fn is not None:
         with open(args.report_fn, "w") as f:
             f.write("\n".join(report))
