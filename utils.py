@@ -59,8 +59,8 @@ class AccuracyStats:
         self.elo_edges = elo_edges
         n_groups = len(elo_edges)
         self.histo = np.zeros((n_groups, n_groups))
-        self.acc_mtx = np.zeros((n_groups, n_groups))
-        self.move_mtx = np.zeros((n_groups, n_groups))
+        self.acc_mtx = np.zeros((n_groups, n_groups, 2))
+        self.move_mtx = np.zeros((n_groups, n_groups, 2))
 
     def eval(self, tokens, probs, tgts):
         tokens[probs < self.min_prob] = -1
@@ -74,9 +74,18 @@ class AccuracyStats:
             move_matches[tgts == NOOP] = 0
             s["matches"] += move_matches.sum(dim=0).numpy()
 
-        for i in range(tgts.shape[0]):
-            self.acc_mtx[tgts[i, 0], tgts[i, 1]] += move_matches[i].sum()
-            self.move_mtx[tgts[i, 0], tgts[i, 1]] += (tgts[i] != NOOP).sum()
+            if s["n"] == 1:
+                for i in range(tgts.shape[0]):
+                    wM = move_matches[i, ::2].sum()
+                    wN = (tgts[i, ::2] != NOOP).sum()
+                    bM = move_matches[i, 1::2].sum()
+                    bN = (tgts[i, 1::2] != NOOP).sum()
+                    wE = tgts[i, 0]
+                    bE = tgts[i, 1]
+                    self.acc_mtx[wE, bE, 0] += wM
+                    self.acc_mtx[wE, bE, 1] += bM
+                    self.move_mtx[wE, bE, 0] += wN
+                    self.move_mtx[wE, bE, 1] += bN
 
     def report(self, SEQ_AVG=10):
         lines = []
@@ -113,17 +122,24 @@ class AccuracyStats:
 
         lines.append("Accuracy Matrix:")
 
-        def fmt_acc(cum_acc, wbin, bbin):
+        def fmt_acc(cum_accs, wbin, bbin):
             n_row = self.move_mtx[wbin]
-            N = n_row[bbin]
-            if N > 0:
-                acc = cum_acc / N
-                acc_str = f"{100 * acc:.1f}"
+            Nw, Nb = n_row[bbin]
+            accW, accB = cum_accs
+            acc_str = ""
+            if Nw > 0:
+                acc = accW / Nw
+                acc_str += f"{100 * acc:.1f}, "
             else:
-                acc_str = "- "
+                acc_str += "- ,"
+            if Nb > 0:
+                acc = accB / Nb
+                acc_str += f"{100 * acc:.1f}"
+            else:
+                acc_str += "- "
             return acc_str
 
-        gen_mtx_report(self.acc_mtx, fmt_acc)
+        gen_mtx_report(self.acc_mtx, fmt_acc, COLWIDTH=20)
 
         return lines
 
