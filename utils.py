@@ -52,10 +52,12 @@ class TargetStats:
 
 
 class AccuracyStats:
-    def __init__(self, seq_len, n_groups, min_prob, ns=[1, 3]):
+    def __init__(self, seq_len, elo_edges, min_prob, ns=[1, 3]):
         self.stats = [{"n": n, "matches": np.zeros(seq_len)} for n in ns]
         self.min_prob = min_prob
         self.total_preds = np.zeros(seq_len)
+        self.elo_edges = elo_edges
+        n_groups = len(elo_edges)
         self.histo = np.zeros((n_groups, n_groups))
         self.acc_mtx = np.zeros((n_groups, n_groups))
         self.move_mtx = np.zeros((n_groups, n_groups))
@@ -71,9 +73,10 @@ class AccuracyStats:
             move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
             move_matches[tgts == NOOP] = 0
             s["matches"] += move_matches.sum(dim=0).numpy()
-            for i in range(tgts.shape[0]):
-                self.acc_mtx[tgts[i, 0], tgts[i, 1]] += move_matches[i].sum()
-                self.move_mtx[tgts[i, 0], tgts[i, 1]] += (tgts[i] != NOOP).sum()
+
+        for i in range(tgts.shape[0]):
+            self.acc_mtx[tgts[i, 0], tgts[i, 1]] += move_matches[i].sum()
+            self.move_mtx[tgts[i, 0], tgts[i, 1]] += (tgts[i] != NOOP).sum()
 
     def report(self):
         lines = []
@@ -90,14 +93,18 @@ class AccuracyStats:
                     lines.append(f"\t{10 * int(i / 10)}: {100 * cum_acc / cum_v:.1f}%")
         lines.append("Elo histogram:")
         for wbin, row in enumerate(reversed(self.histo)):
-            rowstr = "  "
+            rowstr = f"{self.elo_edges[wbin]}".rjust(10)
             for bbin, n in enumerate(row):
                 rowstr += f"{n}".rjust(10)
             lines.append(rowstr)
+        ax = ""
+        for e in self.elo_edges:
+            ax += e.rjust(10)
+        lines.append(ax)
 
         lines.append("Accuracy Matrix:")
         for wbin, acc_row in reversed(list(enumerate(self.acc_mtx))):
-            rowstr = "  "
+            rowstr = f"{self.elo_edges[wbin]}".rjust(10)
             n_row = self.move_mtx[wbin]
             for bbin, (cum_acc, N) in enumerate(zip(acc_row, n_row)):
                 if N > 0:
@@ -106,6 +113,10 @@ class AccuracyStats:
                 else:
                     rowstr += "- ".rjust(10)
             lines.append(rowstr)
+        ax = ""
+        for e in self.elo_edges:
+            ax += e.rjust(10)
+        lines.append(ax)
 
         return lines
 

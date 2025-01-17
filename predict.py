@@ -32,7 +32,7 @@ parser.add_argument(
 @torch.inference_mode()
 def evaluate(outputs, seq_len, elo_edges):
     nbatch = len(outputs)
-    acc_stats = AccuracyStats(seq_len, len(elo_edges), 2 / len(elo_edges))
+    acc_stats = AccuracyStats(seq_len, elo_edges, 2 / len(elo_edges))
     tstats = TargetStats()
     for i, d in enumerate(outputs):
         print(f"Evaluation {int(100 * i / nbatch)}% done", end="\r")
