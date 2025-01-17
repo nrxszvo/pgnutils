@@ -1,6 +1,7 @@
 import numpy as np
 from pgn.py.lib.reconstruct import count_invalid
 from mmcdataset import NOOP
+from functools import partial
 
 
 class LegalGameStats:
@@ -60,6 +61,7 @@ class AccuracyStats:
         n_groups = len(elo_edges)
         self.histo = np.zeros((n_groups, n_groups))
         self.acc_mtx = np.zeros((n_groups, n_groups, 2))
+        self.err_mtx = np.zeros((n_groups, n_groups, 2))
         self.move_mtx = np.zeros((n_groups, n_groups, 2))
 
     def eval(self, tokens, probs, tgts):
@@ -76,14 +78,23 @@ class AccuracyStats:
 
             if s["n"] == 1:
                 for i in range(tgts.shape[0]):
-                    wM = move_matches[i, ::2].sum()
-                    wN = (tgts[i, ::2] != NOOP).sum()
-                    bM = move_matches[i, 1::2].sum()
-                    bN = (tgts[i, 1::2] != NOOP).sum()
                     wE = tgts[i, 0]
                     bE = tgts[i, 1]
+
+                    wM = move_matches[i, ::2].sum()
+                    bM = move_matches[i, 1::2].sum()
                     self.acc_mtx[wE, bE, 0] += wM
                     self.acc_mtx[wE, bE, 1] += bM
+
+                    errors = (tokens[i, 0] - tgts[i]).abs()
+                    errors[tgts[i] == NOOP] = 0
+                    wM = errors[::2].sum()
+                    bM = errors[1::2].sum()
+                    self.err_mtx[wE, bE, 0] += wM
+                    self.err_mtx[wE, bE, 1] += bM
+
+                    wN = (tgts[i, ::2] != NOOP).sum()
+                    bN = (tgts[i, 1::2] != NOOP).sum()
                     self.move_mtx[wE, bE, 0] += wN
                     self.move_mtx[wE, bE, 1] += bN
 
@@ -120,26 +131,28 @@ class AccuracyStats:
         lines.append("Elo histogram:")
         gen_mtx_report(self.histo, lambda data, *args: f"{int(data)}")
 
-        lines.append("Accuracy Matrix:")
-
-        def fmt_acc(cum_accs, wbin, bbin):
+        def fmt_acc(mul, cum_accs, wbin, bbin):
             n_row = self.move_mtx[wbin]
             Nw, Nb = n_row[bbin]
             accW, accB = cum_accs
             acc_str = ""
             if Nw > 0:
                 acc = accW / Nw
-                acc_str += f"{100 * acc:.1f}, "
+                acc_str += f"{mul * acc:.1f}, "
             else:
                 acc_str += "- ,"
             if Nb > 0:
                 acc = accB / Nb
-                acc_str += f"{100 * acc:.1f}"
+                acc_str += f"{mul * acc:.1f}"
             else:
                 acc_str += "- "
             return acc_str
 
-        gen_mtx_report(self.acc_mtx, fmt_acc, COLWIDTH=20)
+        lines.append("Avg Error Matrix:")
+        gen_mtx_report(self.err_mtx, partial(fmt_acc, 1), COLWIDTH=20)
+
+        lines.append("Accuracy Matrix:")
+        gen_mtx_report(self.acc_mtx, partial(fmt_acc, 100), COLWIDTH=20)
 
         return lines
 
