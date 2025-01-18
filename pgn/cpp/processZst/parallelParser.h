@@ -67,10 +67,11 @@ class ParallelParser {
 	int nMoveProcessors;
 	int minSec;
 	int maxSec;
+	int maxInc;
 	std::vector<std::shared_ptr<std::thread> > procThreads;
 	std::vector<std::shared_ptr<std::thread> > gameThreads;
 public:
-	ParallelParser(int nReaders, int nMoveProcessors, int minSec, int maxSec);
+	ParallelParser(int nReaders, int nMoveProcessors, int minSec, int maxSec, int maxInc);
 	~ParallelParser();
 	ParserOutput parse(std::string zst, std::string name, bool requireClk, int printFreq=60);
 };

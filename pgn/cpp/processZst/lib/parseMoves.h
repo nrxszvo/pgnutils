@@ -28,7 +28,7 @@ std::tuple<std::vector<int16_t>, std::vector<int16_t> > parseMoves(std::string m
 
 class PgnProcessor {
 public:
-	PgnProcessor(int minSec, int maxSec);
+	PgnProcessor(int minSec, int maxSec, int maxInc);
 	std::string processLine(std::string& line);
 	int getWelo();
 	int getBelo();
@@ -39,4 +39,5 @@ private:
 	bool reinit;
 	int minSec;
 	int maxSec;
+	int maxInc;
 };

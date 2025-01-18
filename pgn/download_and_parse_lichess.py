@@ -87,6 +87,7 @@ def main(
     allow_no_clock,
     alloc_games,
     alloc_moves,
+    minSec,
 ):
     to_proc = collect_remaining(list_fn, npy_dir)
     if len(to_proc) == 0:
@@ -130,6 +131,8 @@ def main(
                     str(n_reader_proc),
                     "--nMoveProcessors",
                     str(n_move_proc),
+                    "--minSec",
+                    str(minSec),
                 ]
                 if allow_no_clock:
                     cmd.append("--allowNoClock")
@@ -203,7 +206,9 @@ if __name__ == "__main__":
 
     multiprocessing.set_start_method("spawn")
 
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument(
         "--list",
         default="list.txt",
@@ -254,10 +259,16 @@ if __name__ == "__main__":
         help="initial memory allocation for move data (mvids, clk times)",
         type=int,
     )
+    parser.add_argument(
+        "--min_seconds",
+        default=180,
+        help="minimum time control for games in seconds",
+        type=int,
+    )
     args = parser.parse_args()
     if args.alloc_moves > 1024**3:
         print(
-            f"WARNING: allocating {4*args.alloc_moves/1024**3:.2f} GB of output.  Continue?"
+            f"WARNING: allocating {4 * args.alloc_moves / 1024**3:.2f} GB of output.  Continue?"
         )
         resp = input("Y|n")
         if resp == "n":
@@ -274,4 +285,5 @@ if __name__ == "__main__":
         args.allow_no_clock,
         args.alloc_games,
         args.alloc_moves,
+        args.min_seconds,
     )

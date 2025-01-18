@@ -105,7 +105,7 @@ const re2::RE2 termRe("\\[Termination \"(.+)\"\\]");
 const re2::RE2 reW("\\[WhiteElo \"([0-9]+)\"\\]");
 const re2::RE2 reB("\\[BlackElo \"([0-9]+)\"\\]");
 
-string processRawLine(string& line, State& state, int minSec, int maxSec) {
+string processRawLine(string& line, State& state, int minSec, int maxSec, int maxInc) {
 	line.erase(remove(line.begin(), line.end(), '\n'), line.cend());
 	if (line.size() > 0) {
 		if (line[0] == '[') {
@@ -118,7 +118,7 @@ string processRawLine(string& line, State& state, int minSec, int maxSec) {
 			} else if (line.substr(0,12) == "[TimeControl") {
 				int tim, inc = 0;
 				if (re2::RE2::PartialMatch(line, timeRe, &tim, &inc)) {
-					if (inc == 0 && tim <= minSec && tim >= minSec) {
+					if (inc <= maxInc && tim <= maxSec && tim >= minSec) {
 						state.time = tim;
 					}
 				}
@@ -150,14 +150,14 @@ string processRawLine(string& line, State& state, int minSec, int maxSec) {
 	return "INCOMPLETE";
 }
 
-PgnProcessor::PgnProcessor(int minSec, int maxSec): reinit(false), minSec(minSec), maxSec(maxSec) {}
+PgnProcessor::PgnProcessor(int minSec, int maxSec, int maxInc): reinit(false), minSec(minSec), maxSec(maxSec), maxInc(maxInc) {}
 
 string PgnProcessor::processLine(string& line) {
 	if (this->reinit) {
 		this->state.init();
 		this->reinit = false;
 	}
-	string code = processRawLine(line, this->state, this->minSec, this->maxSec);
+	string code = processRawLine(line, this->state, this->minSec, this->maxSec, this->maxInc);
 	if (code == "COMPLETE" || code == "INVALID") {
 		this->reinit = true;
 	}
