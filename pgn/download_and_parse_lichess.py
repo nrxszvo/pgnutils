@@ -203,7 +203,7 @@ if __name__ == "__main__":
 
     multiprocessing.set_start_method("spawn")
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         "--list",
         default="list.txt",
