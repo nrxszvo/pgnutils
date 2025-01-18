@@ -20,6 +20,8 @@ ABSL_FLAG(bool, serial, false, "Disable parallel processing");
 ABSL_FLAG(int, printFreq, 60, "Print status every printFreq seconds");
 ABSL_FLAG(int, nReaders, std::thread::hardware_concurrency()-1, "Number of zst/pgn readers for parallel processing");
 ABSL_FLAG(int, nMoveProcessors, 1, "Number of game parsers for parallel processing");
+ABSL_FLAG(int, minSec, 300, "Minimum time control for game in seconds");
+ABSL_FLAG(int, maxSec, 10800, "Maximum time control for game in seconds");
 ABSL_FLAG(bool, allowNoClock, false, "Allow games with no clock time data to be included");
 
 void writeNpy(std::string outdir, ParserOutput& res) {
@@ -62,7 +64,9 @@ int main(int argc, char *argv[]) {
 	} else {
 		ParallelParser parser(
 				absl::GetFlag(FLAGS_nReaders),
-			   	absl::GetFlag(FLAGS_nMoveProcessors)
+			   	absl::GetFlag(FLAGS_nMoveProcessors),
+				absl::GetFlag(FLAGS_minSec),
+				absl::GetFlag(FLAGS_maxSec)
 				);
 		res = parser.parse(absl::GetFlag(FLAGS_zst), 
 				name,

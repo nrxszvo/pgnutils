@@ -6,6 +6,7 @@
 #include "json.hpp"
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <random>
 #include <filesystem>
 
@@ -112,7 +113,7 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 	std::ofstream elofile(outdir + "/elo.npy", std::ios::binary);
 	std::vector<Split> splits(3);
 	std::vector<std::string> names = {"train", "test", "val"};
-	std::vector<int> eloHist(eloEdges.size()+1, 0);
+	std::vector<std::vector<int> > eloHist(eloEdges.size(), std::vector<int>(eloEdges.size(), 0));
 	for (int i=0; i<3; i++) {
 		splits[i].name = names[i];
 		splits[i].idxData = std::ofstream(outdir + "/" + names[i] + ".npy", std::ios::binary);
@@ -140,7 +141,6 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 				return i;
 			}
 		}
-		return (int)eloEdges.size();
 	};
 	
 	int nTotal = 0;
@@ -155,9 +155,8 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 
 		int wbin = getEloBin(whiteElo);
 		int bbin = getEloBin(blackElo);
-		if (eloHist[wbin] == maxGames || eloHist[bbin] == maxGames) continue;
-		eloHist[wbin]++;
-		if (bbin != wbin) eloHist[bbin]++;
+		if (eloHist[wbin][bbin] == maxGames) continue;
+		eloHist[wbin][bbin]++;
 		
 		int idx = clk.size()-1;	
 		while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
@@ -166,8 +165,10 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		}
 
 		bool done = true;
-		for (auto count: eloHist) {
-			done = done && count >= maxGames;
+		for (auto row: eloHist) {
+			for (auto count: row) {
+				done = done && count >= maxGames;
+			}
 		}
 		if (done) {
 			std::cout << std::endl << "Reached max games; terminating early" << std::endl;
@@ -175,8 +176,18 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		}
 	}	
 	std::cout << "Included " << nGames << " out of " << nTotal << " games" << std::endl;
-	for (int i=0; i<eloEdges.size(); i++) std::cout << "Elo <" << eloEdges[i] << ": " << eloHist[i] << std::endl;	
-	std::cout << "Elo >" << eloEdges[eloEdges.size()-1] << ": " << eloHist[eloEdges.size()] << std::endl;
+	for (int i=eloEdges.size()-1; i>=0; i--) {
+		std::cout << std::setfill(' ') << std::setw(11) << eloEdges[i];
+		for (int j=0; j<eloEdges.size(); j++) {
+			std::cout << std::setfill(' ') << std::setw(11) << eloHist[i][j];
+		}
+		std::cout << std::endl;
+	}
+	std::cout << std::setfill(' ') << std::setw(11) << ' ';
+	for (auto e: eloEdges) {
+		std::cout << std::setfill(' ') << std::setw(11) << e;
+	}
+	std::cout << std::endl;
 
 	gsfile.close();
 	elofile.close();
@@ -210,6 +221,7 @@ int main(int argc, char *argv[]) {
 	for (auto e: eloEdgeStr) {
 		eloEdges.push_back(std::stoi(e));
 	}
+	eloEdges.push_back(INT_MAX);
 	int maxGames = absl::GetFlag(FLAGS_maxGamesPerElo);
 	filterData(npydir, minMoves, minTime, outdir, trainp, testp, eloEdges, maxGames);
 	return 0;

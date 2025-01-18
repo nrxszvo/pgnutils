@@ -21,11 +21,11 @@ struct GameState {
 
 };
 
-void loadGamesZst(GameState gs, std::string zst, size_t frameStart, size_t frameEnd, int nMoveProcessors) {
+void loadGamesZst(GameState gs, std::string zst, size_t frameStart, size_t frameEnd, int nMoveProcessors, int minSec, int maxSec) {
 	int gameId = 0;
 	int gamestart = 0;
 	int lineno = 0;
-	PgnProcessor processor;
+	PgnProcessor processor(minSec, maxSec);
 	DecompressStream decompressor(zst, frameStart, frameEnd);
 	while(decompressor.decompressFrame() != 0) {
 		std::vector<std::string> lines;
@@ -68,7 +68,7 @@ std::vector<std::shared_ptr<std::thread> > startGamesReader(
 	   	std::condition_variable& gamesCv,
 		std::string zst,
 		std::vector<size_t>& frameBoundaries,
-	   	int nMoveProcessors) {
+	   	int nMoveProcessors, int minSec, int maxSec) {
 	GameState gs(&gamesQ, &gamesMtx, &gamesCv);
 	std::vector<std::shared_ptr<std::thread> > procs;
 	for (int i=0; i<frameBoundaries.size()-1; i++) {
@@ -77,7 +77,7 @@ std::vector<std::shared_ptr<std::thread> > startGamesReader(
 		gs.pid = i;
 		procs.push_back(
 				std::make_shared<std::thread>(
-					loadGamesZst, gs, zst, start, end, nMoveProcessors
+					loadGamesZst, gs, zst, start, end, nMoveProcessors, minSec, maxSec
 					)
 				);
 	}
@@ -180,8 +180,8 @@ std::vector<std::shared_ptr<std::thread> >  startProcessorThreads(
 	return threads;
 }
 
-ParallelParser::ParallelParser(int nReaders, int nMoveProcessors) 
-	: nReaders(nReaders), nMoveProcessors(nMoveProcessors) {};
+ParallelParser::ParallelParser(int nReaders, int nMoveProcessors, int minSec, int maxSec) 
+	: nReaders(nReaders), nMoveProcessors(nMoveProcessors), minSec(minSec), maxSec(maxSec) {};
 
 ParallelParser::~ParallelParser() {
 	for (auto gt: gameThreads) {
@@ -225,7 +225,9 @@ ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requi
 		gamesCv, 
 		zst,
 		frameBoundaries,
-		nMoveProcessors
+		nMoveProcessors,
+		minSec,
+		maxSec
 	);
 
 	auto start = hrc::now();

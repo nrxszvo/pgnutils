@@ -9,7 +9,7 @@
 ParserOutput processSerial(std::string zst) {
 
 	DecompressStream decompressor(zst,0,0);
-	PgnProcessor processor;
+	PgnProcessor processor(300, 10800);
 
 	int gamestart = 0;
 	int lineno = 0;
