@@ -4,7 +4,7 @@ import json
 
 
 def elo_matrix(
-    md, welos, belos, edges=[1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
+    welos, belos, edges=[1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
 ):
     def get_bins(elos):
         diff_mtx = np.subtract.outer(elos, edges)
@@ -72,20 +72,29 @@ def game_lengths(md, gs):
     plt.savefig("gamelengths.png", dpi=500)
 
 
-def load_data(npydir):
-    with open(f"{npydir}/fmd.json") as f:
-        md = json.load(f)
-    gs = np.memmap(f"{npydir}/gs.npy", mode="r", dtype="int64", shape=md["ngames"])
-    elos = np.memmap(
-        f"{npydir}/elo.npy", mode="r", dtype="int16", shape=(md["ngames"], 2)
-    )
-    welos = elos[:, 0]
-    belos = elos[:, 1]
-    return md, gs, welos, belos
+def load_data(npydirs):
+    all_welos = np.array([])
+    all_belos = np.array([])
+    for npydir in npydirs:
+        print(f"loading {npydir}...")
+        # with open(f"{npydir}/fmd.json") as f:
+        #    md = json.load(f)
+        md = np.load(f"{npydir}/md.npy", allow_pickle=True).item()
+        # gs = np.memmap(f"{npydir}/gs.npy", mode="r", dtype="int64", shape=md["ngames"])
+        welos = np.memmap(
+            f"{npydir}/welos.npy", mode="r", dtype="int16", shape=(md["ngames"],)
+        )
+        belos = np.memmap(
+            f"{npydir}/belos.npy", mode="r", dtype="int16", shape=(md["ngames"],)
+        )
+        all_welos = np.concatenate([all_welos, welos[:]])
+        all_belos = belos = np.concatenate([all_belos, belos[:]])
+    print("done")
+    return all_welos, all_belos
 
 
 if __name__ == "__main__":
     import sys
 
-    md, gs, welos, belos = load_data(sys.argv[1])
-    elo_matrix(md, welos, belos)
+    welos, belos = load_data(sys.argv[1:])
+    elo_matrix(welos, belos)

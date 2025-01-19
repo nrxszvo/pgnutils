@@ -18,9 +18,11 @@ def collect_existing_npy(npy_dir):
     if os.path.exists(procfn):
         with open(procfn) as f:
             for line in f:
-                vs = line.rstrip().split(",")
-                if vs[-1] != "failed":
-                    existing.append(vs[0])
+                timestamp, name, ngames, nmoves, block, status = line.rstrip().split(
+                    ","
+                )
+                if status != "failed":
+                    existing.append(name)
     return existing
 
 
@@ -249,15 +251,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--alloc_games",
-        default=1024**3,
-        help="initial memory allocation for game-level data (elos, gamestarts)",
-        type=int,
+        default=1,
+        help="initial memory allocation for game-level data (elos, gamestarts) in billions of games",
+        type=float,
     )
     parser.add_argument(
         "--alloc_moves",
-        default=50 * 1024**3,
-        help="initial memory allocation for move data (mvids, clk times)",
-        type=int,
+        default=50,
+        help="initial memory allocation for move data (mvids, clk times) in billions of moves",
+        type=float,
     )
     parser.add_argument(
         "--min_seconds",
@@ -266,9 +268,11 @@ if __name__ == "__main__":
         type=int,
     )
     args = parser.parse_args()
-    if args.alloc_moves > 1024**3:
+    alloc_games = int(1e9 * args.alloc_games)
+    alloc_moves = int(1e9 * args.alloc_moves)
+    if alloc_moves >= 5e10:
         print(
-            f"WARNING: allocating {4 * args.alloc_moves / 1024**3:.2f} GB of output.  Continue?"
+            f"WARNING: allocating {4 * alloc_moves / 1024**3:.2f} GB of output.  Continue?"
         )
         resp = input("Y|n")
         if resp == "n":
@@ -283,7 +287,7 @@ if __name__ == "__main__":
         args.n_reader_procs,
         args.n_move_procs,
         args.allow_no_clock,
-        args.alloc_games,
-        args.alloc_moves,
+        alloc_games,
+        alloc_moves,
         args.min_seconds,
     )

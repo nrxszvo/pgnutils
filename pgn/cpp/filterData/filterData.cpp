@@ -12,7 +12,7 @@
 
 using json = nlohmann::json;
 
-ABSL_FLAG(std::string, npydir, "", "directory containing npy raw data files");
+ABSL_FLAG(std::vector<std::string>, npydir, std::vector<std::string>(), "directories containing npy raw data files");
 ABSL_FLAG(int, minMoves, 11, "minimum number of game moves to be included in filtered dataset");
 ABSL_FLAG(int, minTime, 30, "minimum time remaining to be included in filtered dataset");
 ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
@@ -106,8 +106,9 @@ struct Split {
 
 
 
-void filterData(std::string& npydir, int minMoves, int minTime, std::string& outdir, float trainp, float testp, std::vector<int>& eloEdges, int maxGames) {
-	MMCRawDataReader mrd(npydir);
+void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std::string& outdir, float trainp, float testp, std::vector<int>& eloEdges, int maxGames) {
+	MMCRawDataReader mrd(npydir.back());
+	npydir.pop_back();
 	std::vector<int16_t> clk;
 	std::ofstream gsfile(outdir + "/gs.npy", std::ios::binary);
 	std::ofstream elofile(outdir + "/elo.npy", std::ios::binary);
@@ -143,14 +144,26 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 		}
 	};
 	
-	int nTotal = 0;
+	size_t totalGames = 0;
+	for (auto dn: npydir) {
+		totalGames += MMCRawDataReader(dn).getTotalGames();
+	}
+	size_t gamesSoFar = 0;
+
 	while (true) {
 	 	auto [bytesRead, gameStart, whiteElo, blackElo] = mrd.nextGame(clk);
-		if (bytesRead == 0) break;
+		if (bytesRead == 0) {
+			if (npydir.empty()) {
+				break;
+			} else {
+				mrd = MMCRawDataReader(npydir.back());
+				npydir.pop_back();
+			}
+		}
 
-		nTotal++;
-		if (nTotal % 1000 == 0) {
-			std::cout << int(100*(float)nTotal/mrd.getTotalGames()) << "% done\r";
+		gamesSoFar++;
+		if (gamesSoFar % 1000 == 0) {
+			std::cout << int(100*(float)gamesSoFar/totalGames) << "% done\r";
 		}
 
 		int wbin = getEloBin(whiteElo);
@@ -175,7 +188,7 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 			break;
 		}
 	}	
-	std::cout << "Included " << nGames << " out of " << nTotal << " games" << std::endl;
+	std::cout << "Included " << nGames << " out of " << gamesSoFar << " games" << std::endl;
 	for (int i=eloEdges.size()-1; i>=0; i--) {
 		std::cout << std::setfill(' ') << std::setw(11) << eloEdges[i];
 		for (int j=0; j<eloEdges.size(); j++) {
@@ -210,7 +223,7 @@ void filterData(std::string& npydir, int minMoves, int minTime, std::string& out
 int main(int argc, char *argv[]) {
 	absl::SetProgramUsageMessage("filter raw MimicChess dataset based on minimum number-of-moves and time-remaining constraints; randomly assign each game to train, val, or test sets");
 	absl::ParseCommandLine(argc, argv);
-	std::string npydir = absl::GetFlag(FLAGS_npydir);
+	std::vector<std::string> npydir = absl::GetFlag(FLAGS_npydir);
 	int minMoves = absl::GetFlag(FLAGS_minMoves);
 	int minTime = absl::GetFlag(FLAGS_minTime);
 	std::string outdir = absl::GetFlag(FLAGS_outdir);
