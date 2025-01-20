@@ -22,7 +22,7 @@ ABSL_FLAG(float, testp, 0.08, "percentage of dataset for testing");
 ABSL_FLAG(std::vector<std::string>, eloEdges, std::vector<std::string>({"1000","1200","1400","1600","1800","2000","2200","2400","2600"}), "ELO bin edges for ensuring even distribution of ELOs");
 ABSL_FLAG(int, maxGamesPerElo, 5000000, "maximum number of games per ELO group");
 
-int MMCRawDataReader::getBlockId() {
+int64_t MMCRawDataReader::getBlockId() {
 	return blockId;
 }
 
@@ -135,13 +135,13 @@ void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std
 	RandDS rds(trainp, testp);
 
 	int64_t nGames = 0;
-	auto insertCoords = [&](int64_t gStart, int64_t gLength, int16_t welo, int16_t belo, int blockId){
+	auto insertCoords = [&](int64_t gStart, int64_t gLength, int16_t welo, int16_t belo, int64_t blockId){
 		int dsIdx = rds.get();
 		
 		splits[dsIdx].idxData.write((char*)&gStart, sizeof(int64_t));
 		splits[dsIdx].idxData.write((char*)&gLength, sizeof(int64_t));
 		splits[dsIdx].idxData.write((char*)&nGames, sizeof(int64_t));
-		splits[dsIdx].idxData.write((char*)&blockId, sizeof(int));
+		splits[dsIdx].idxData.write((char*)&blockId, sizeof(int64_t));
 		splits[dsIdx].nGames++;
 	
 		gsfile.write((char*)&gStart, sizeof(gStart));
@@ -165,7 +165,7 @@ void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std
 	for (auto dn: npydir) {
 		if (exitEarly) break;
 		MMCRawDataReader mrd = MMCRawDataReader(dn);
-		int blockId = mrd.getBlockId();
+		int64_t blockId = mrd.getBlockId();
 		std::cout << "Processing block " << blockId << std::endl;
 		while (true) {
 			auto [bytesRead, gameStart, whiteElo, blackElo] = mrd.nextGame(clk);
@@ -221,7 +221,7 @@ void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std
 	for (int i=0; i<splits.size(); i++) {
 		Split& split = splits[i];
 		split.idxData.close();
-		md[split.name + "_shape"] = {split.nGames,3};
+		md[split.name + "_shape"] = {split.nGames,4};
 		md[split.name + "_n"] = split.nGames;
 	}
 	std::ofstream mdfile(outdir + "/fmd.json");
@@ -230,7 +230,7 @@ void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std
 
 std::vector<std::string> getBlockDirs(const std::string& npydir)
 {
-	int blockId;
+	int64_t blockId;
 	int nBlocks = 0;
 	for(auto& p : std::filesystem::recursive_directory_iterator(npydir)) {
 		if (p.is_directory()) {

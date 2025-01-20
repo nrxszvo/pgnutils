@@ -97,7 +97,7 @@ class MMCDataset(Dataset):
         seq_len,
         opening_moves,
         indices,
-        mvids,
+        blocks,
         elos,
         elo_edges,
         max_nsamp=None,
@@ -110,7 +110,7 @@ class MMCDataset(Dataset):
         if max_nsamp is not None:
             self.nsamp = min(max_nsamp, self.nsamp)
 
-        self.mvids = mvids
+        self.blocks = blocks
         self.elos = elos
         self.elo_edges = elo_edges
 
@@ -123,16 +123,16 @@ class MMCDataset(Dataset):
                 return i
 
     def __getitem__(self, idx):
-        gs, nmoves, gidx = self.indices[idx]
+        gs, nmoves, gidx, blk = self.indices[idx]
         n_inp = min(self.seq_len, nmoves)
         inp = np.empty(n_inp, dtype="int32")
-        inp[:] = self.mvids[gs : gs + n_inp]
+        mvids = self.blocks[blk]["mvids"]
+        inp[:] = mvids[gs : gs + n_inp]
 
         opening = np.empty(self.opening_moves, dtype="int64")
-        opening[:] = self.mvids[gs : gs + self.opening_moves]
+        opening[:] = mvids[gs : gs + self.opening_moves]
 
         tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
-        # tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
         welo, belo = self.elos[gidx]
         tgt[::2] = self._get_group(welo)
         tgt[1::2] = self._get_group(belo)
@@ -210,18 +210,10 @@ class MMCCheatingDataset(Dataset):
 
 
 def load_data(dirname, load_cheatdata=False):
-    md = np.load(os.path.join(dirname, "md.npy"), allow_pickle=True).item()
     with open(f"{dirname}/fmd.json") as f:
         fmd = json.load(f)
     data = {
-        "md": md,
         "fmd": fmd,
-        "mvids": np.memmap(
-            os.path.join(dirname, "mvids.npy"),
-            mode="r",
-            dtype="int16",
-            shape=md["nmoves"],
-        ),
         "elos": np.memmap(
             os.path.join(dirname, "elo.npy"),
             mode="r",
@@ -247,11 +239,22 @@ def load_data(dirname, load_cheatdata=False):
             shape=tuple(fmd["test_shape"]),
         ),
     }
-
-    if load_cheatdata:
-        data["cheatdata"] = np.load(
-            os.path.join(dirname, "cheatdata.npy"), allow_pickle=True
-        ).item()
+    blocks = []
+    for blkdn in fmd["block_dirs"]:
+        dn = os.path.join(dirname, blkdn)
+        md = np.load(os.path.join(dn, "md.npy"), allow_pickle=True).item()
+        blocks.append(
+            {
+                "md": md,
+                "mvids": np.memmap(
+                    os.path.join(dn, "mvids.npy"),
+                    mode="r",
+                    dtype="int16",
+                    shape=md["nmoves"],
+                ),
+            }
+        )
+    data["blocks"] = blocks
     return data
 
 
@@ -287,7 +290,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.max_seq_len,
                 self.opening_moves,
                 self.train,
-                self.mvids,
+                self.blocks,
                 self.elos,
                 self.elo_edges,
             )
@@ -295,7 +298,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.max_seq_len,
                 self.opening_moves,
                 self.val,
-                self.mvids,
+                self.blocks,
                 self.elos,
                 self.elo_edges,
             )
@@ -304,7 +307,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.max_seq_len,
                 self.opening_moves,
                 self.val,
-                self.mvids,
+                self.blocks,
                 self.elos,
                 self.elo_edges,
             )
@@ -326,7 +329,7 @@ class MMCDataModule(L.LightningDataModule):
                     self.max_seq_len,
                     self.opening_moves,
                     self.test,
-                    self.mvids,
+                    self.blocks,
                     self.elos,
                     self.elo_edges,
                     self.max_testsamp,
