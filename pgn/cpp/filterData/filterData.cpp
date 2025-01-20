@@ -9,10 +9,11 @@
 #include <iomanip>
 #include <random>
 #include <filesystem>
+#include <re2/re2.h>
 
 using json = nlohmann::json;
 
-ABSL_FLAG(std::vector<std::string>, npydir, std::vector<std::string>(), "directories containing npy raw data files");
+ABSL_FLAG(std::string, npydir, "", "directory containing block folders of npy raw data files");
 ABSL_FLAG(int, minMoves, 11, "minimum number of game moves to be included in filtered dataset");
 ABSL_FLAG(int, minTime, 30, "minimum time remaining to be included in filtered dataset");
 ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
@@ -21,14 +22,20 @@ ABSL_FLAG(float, testp, 0.08, "percentage of dataset for testing");
 ABSL_FLAG(std::vector<std::string>, eloEdges, std::vector<std::string>({"1000","1200","1400","1600","1800","2000","2200","2400","2600"}), "ELO bin edges for ensuring even distribution of ELOs");
 ABSL_FLAG(int, maxGamesPerElo, 5000000, "maximum number of games per ELO group");
 
+int MMCRawDataReader::getBlockId() {
+	return blockId;
+}
+
+const re2::RE2 BLOCK_PAT = ".*block-([0-9]+).*";
 MMCRawDataReader::MMCRawDataReader(std::string npydir) {
+	re2::RE2::PartialMatch(npydir, BLOCK_PAT, &blockId);
 	gamestarts = std::ifstream(npydir + "/gamestarts.npy", std::ios::binary);
 	eloWhite = std::ifstream(npydir + "/welos.npy", std::ios::binary);
 	eloBlack = std::ifstream(npydir + "/belos.npy", std::ios::binary);
 
 	gamestarts.seekg(0, gamestarts.end);
 	size_t nbytes = gamestarts.tellg();
-	totalGames = nbytes/8;
+	totalGames = nbytes/sizeof(int64_t);
 	gamestarts.seekg(0, gamestarts.beg);
 
 	gamestarts.read((char*)&gameStart, sizeof(gameStart));
@@ -107,8 +114,14 @@ struct Split {
 
 
 void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std::string& outdir, float trainp, float testp, std::vector<int>& eloEdges, int maxGames) {
-	MMCRawDataReader mrd(npydir.back());
-	npydir.pop_back();
+	size_t totalGames = 0;
+	for (auto dn: npydir) {
+		MMCRawDataReader mrd = MMCRawDataReader(dn);
+		std::cout << "Block " << mrd.getBlockId() << ": " << mrd.getTotalGames() << " games" << std::endl;
+		totalGames += mrd.getTotalGames();
+	}
+	std::cout << "Total games: " << totalGames << std::endl;
+	
 	std::vector<int16_t> clk;
 	std::ofstream gsfile(outdir + "/gs.npy", std::ios::binary);
 	std::ofstream elofile(outdir + "/elo.npy", std::ios::binary);
@@ -122,12 +135,13 @@ void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std
 	RandDS rds(trainp, testp);
 
 	int64_t nGames = 0;
-	auto insertCoords = [&](int64_t gStart, int64_t gLength, int16_t welo, int16_t belo){
+	auto insertCoords = [&](int64_t gStart, int64_t gLength, int16_t welo, int16_t belo, int blockId){
 		int dsIdx = rds.get();
 		
 		splits[dsIdx].idxData.write((char*)&gStart, sizeof(int64_t));
 		splits[dsIdx].idxData.write((char*)&gLength, sizeof(int64_t));
 		splits[dsIdx].idxData.write((char*)&nGames, sizeof(int64_t));
+		splits[dsIdx].idxData.write((char*)&blockId, sizeof(int));
 		splits[dsIdx].nGames++;
 	
 		gsfile.write((char*)&gStart, sizeof(gStart));
@@ -144,50 +158,45 @@ void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std
 		}
 	};
 	
-	size_t totalGames = 0;
-	for (auto dn: npydir) {
-		totalGames += MMCRawDataReader(dn).getTotalGames();
-	}
+	
 	size_t gamesSoFar = 0;
+	bool exitEarly = false;
 
-	while (true) {
-	 	auto [bytesRead, gameStart, whiteElo, blackElo] = mrd.nextGame(clk);
-		if (bytesRead == 0) {
-			if (npydir.empty()) {
+	for (auto dn: npydir) {
+		if (exitEarly) break;
+		MMCRawDataReader mrd = MMCRawDataReader(dn);
+		int blockId = mrd.getBlockId();
+		std::cout << "Processing block " << blockId << std::endl;
+		while (true) {
+			auto [bytesRead, gameStart, whiteElo, blackElo] = mrd.nextGame(clk);
+			if (bytesRead == 0) break;
+			gamesSoFar++;
+			if (gamesSoFar % 1000 == 0) {
+				std::cout << (int)(100*(double)gamesSoFar/totalGames) << "% done\r";
+			}
+
+			int wbin = getEloBin(whiteElo);
+			int bbin = getEloBin(blackElo);
+			if (eloHist[wbin][bbin] == maxGames) continue;
+			eloHist[wbin][bbin]++;
+			
+			int idx = clk.size()-1;	
+			while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
+			if (idx >= minMoves) {
+				insertCoords(gameStart, idx+1, whiteElo, blackElo, blockId);
+			}
+
+			for (auto row: eloHist) {
+				for (auto count: row) {
+					exitEarly = exitEarly && count >= maxGames;
+				}
+			}
+			if (exitEarly) {
+				std::cout << std::endl << "Reached max games; terminating early" << std::endl;
 				break;
-			} else {
-				mrd = MMCRawDataReader(npydir.back());
-				npydir.pop_back();
 			}
-		}
-
-		gamesSoFar++;
-		if (gamesSoFar % 1000 == 0) {
-			std::cout << int(100*(float)gamesSoFar/totalGames) << "% done\r";
-		}
-
-		int wbin = getEloBin(whiteElo);
-		int bbin = getEloBin(blackElo);
-		if (eloHist[wbin][bbin] == maxGames) continue;
-		eloHist[wbin][bbin]++;
-		
-		int idx = clk.size()-1;	
-		while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
-		if (idx >= minMoves) {
-			insertCoords(gameStart, idx+1, whiteElo, blackElo);
-		}
-
-		bool done = true;
-		for (auto row: eloHist) {
-			for (auto count: row) {
-				done = done && count >= maxGames;
-			}
-		}
-		if (done) {
-			std::cout << std::endl << "Reached max games; terminating early" << std::endl;
-			break;
-		}
-	}	
+		}	
+	}
 	std::cout << "Included " << nGames << " out of " << gamesSoFar << " games" << std::endl;
 	for (int i=eloEdges.size()-1; i>=0; i--) {
 		std::cout << std::setfill(' ') << std::setw(11) << eloEdges[i];
@@ -219,11 +228,36 @@ void filterData(std::vector<std::string>& npydir, int minMoves, int minTime, std
 	mdfile << md << std::endl;
 }
 
+std::vector<std::string> getBlockDirs(const std::string& npydir)
+{
+	int blockId;
+	int nBlocks = 0;
+	for(auto& p : std::filesystem::recursive_directory_iterator(npydir)) {
+		if (p.is_directory()) {
+			std::string dn = p.path().string();
+			if (re2::RE2::PartialMatch(dn, BLOCK_PAT, &blockId)) {
+				nBlocks++;
+			}
+		}
+	}
+	std::vector<std::string> blockDns(nBlocks);
+	for(auto& p : std::filesystem::recursive_directory_iterator(npydir)) {
+		if (p.is_directory()) {
+			std::string dn = p.path().string();
+			if (re2::RE2::PartialMatch(dn, BLOCK_PAT, &blockId)) {
+				blockDns[blockId] = dn;
+			}
+		}
+	}
+	return blockDns;
+}
+
+
 
 int main(int argc, char *argv[]) {
 	absl::SetProgramUsageMessage("filter raw MimicChess dataset based on minimum number-of-moves and time-remaining constraints; randomly assign each game to train, val, or test sets");
 	absl::ParseCommandLine(argc, argv);
-	std::vector<std::string> npydir = absl::GetFlag(FLAGS_npydir);
+	std::string npydir = absl::GetFlag(FLAGS_npydir);
 	int minMoves = absl::GetFlag(FLAGS_minMoves);
 	int minTime = absl::GetFlag(FLAGS_minTime);
 	std::string outdir = absl::GetFlag(FLAGS_outdir);
@@ -236,6 +270,7 @@ int main(int argc, char *argv[]) {
 	}
 	eloEdges.push_back(INT_MAX);
 	int maxGames = absl::GetFlag(FLAGS_maxGamesPerElo);
-	filterData(npydir, minMoves, minTime, outdir, trainp, testp, eloEdges, maxGames);
+	std::vector<std::string>blockDirs = getBlockDirs(npydir);
+	filterData(blockDirs, minMoves, minTime, outdir, trainp, testp, eloEdges, maxGames);
 	return 0;
 }

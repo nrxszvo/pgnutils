@@ -180,6 +180,7 @@ def main(
                                 "Last archive contained no moves, 'terminate' signaled"
                             )
                         active_procs.remove(procdata)
+                        break
 
             if terminate and len(active_procs) == 0:
                 break
