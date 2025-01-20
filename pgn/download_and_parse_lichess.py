@@ -9,7 +9,7 @@ import time
 import wget
 from multiprocessing import Queue, Process
 
-from py.lib import timeit, DataWriter, PrintSafe
+from py.lib import timeit, DataWriter, PrintSafe, resize_mmaps
 
 
 def collect_existing_npy(npy_dir):
@@ -90,6 +90,7 @@ def main(
     alloc_games,
     alloc_moves,
     minSec,
+    resize_bin,
 ):
     to_proc = collect_remaining(list_fn, npy_dir)
     if len(to_proc) == 0:
@@ -202,6 +203,7 @@ def main(
         for fn in os.listdir("."):
             if re.match(r"lichess_db_standard_rated.*\.zst.*\.tmp", fn):
                 os.remove(fn)
+        resize_mmaps(resize_bin, npy_dir)
 
 
 if __name__ == "__main__":
@@ -268,6 +270,11 @@ if __name__ == "__main__":
         help="minimum time control for games in seconds",
         type=int,
     )
+    parser.add_argument(
+        "--resize_bin",
+        default="resizeMMaps",
+        help="binary for resizing memmaps after all data has been processed",
+    )
     args = parser.parse_args()
     alloc_games = int(1e9 * args.alloc_games)
     alloc_moves = int(1e9 * args.alloc_moves)
@@ -291,4 +298,5 @@ if __name__ == "__main__":
         alloc_games,
         alloc_moves,
         args.min_seconds,
+        args.resize_bin,
     )
