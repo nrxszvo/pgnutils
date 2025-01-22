@@ -5,21 +5,17 @@
 #include <tuple>
 
 class MMCRawDataReader {		
-	std::ifstream gamestarts;
-	std::ifstream clktimes;
-	std::ifstream eloWhite;
-	std::ifstream eloBlack;
-	std::ofstream filteredMoves;
-	int64_t blockId;
+	std::ifstream gsIf;
+	std::ifstream clkIf;
+	std::ifstream weloIf;
+	std::ifstream beloIf;
 	int64_t totalGames;
+	int64_t nGames;
 	int64_t gameStart;
-	int64_t lastGameStart;
 	int16_t whiteElo;
 	int16_t blackElo;
-
 public:
-	MMCRawDataReader(std::string npydir);
-	int64_t getBlockId();
+	MMCRawDataReader(std::string npydir, int64_t startGame=0, int64_t nGames =-1);
 	std::tuple<size_t,size_t,int16_t,int16_t> nextGame(std::vector<int16_t>& clk);
 	int64_t getTotalGames();
 };
