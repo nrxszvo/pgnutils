@@ -1,11 +1,19 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import json
+import os
+import argparse
+
+parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser.add_argument(
+    "npydir", help="top-level directory containing either fmd.json or block folders"
+)
 
 
 def elo_matrix(
     welos, belos, edges=[1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
 ):
+    """
     def get_bins(elos):
         diff_mtx = np.subtract.outer(elos, edges)
         diff_mtx[diff_mtx > 0] = float("-inf")
@@ -19,7 +27,7 @@ def elo_matrix(
         for m, n in zip(wbin, bbin):
             mtx[m, n] += 1
         return mtx
-
+    """
     maxelo = max(welos.max(), belos.max())
     edges.append(maxelo + 1)
     H, w_edges, b_edges = np.histogram2d(welos, belos, bins=(edges, edges))
@@ -42,13 +50,11 @@ def elo_hist(
     width = 0.33
     mult = 0
     ax = plt.figure().add_subplot()
-    breakpoint()
     hw, eb = np.histogram(welos, edges)
     hb, eb = np.histogram(belos, edges)
     for name, data in [("white", hw), ("black", hb)]:
         offset = width * mult
-        rects = ax.bar(x + offset, data, width, label=name)
-        # ax.bar_label(rects, padding=3)
+        ax.bar(x + offset, data, width, label=name)
         mult += 1
     ax.set_ylabel("# games")
     ax.set_yscale("log")
@@ -58,6 +64,19 @@ def elo_hist(
     ax.legend(loc="upper right")
 
     plt.savefig("elos.png", dpi=500)
+
+
+def time_hist(blocks, edges=[180, 300, 600, 900, 1800, float("inf")]):
+    all_hs = None
+    for blk in blocks:
+        start_times = blk["clk"][blk["gs"]]
+        hs, es = np.histogram(start_times, edges)
+        if all_hs is None:
+            all_hs = hs
+        else:
+            all_hs += hs
+    for h, e in zip(all_hs, es):
+        print(f"{e}:{h}")
 
 
 def game_lengths(md, gs):
@@ -72,29 +91,45 @@ def game_lengths(md, gs):
     plt.savefig("gamelengths.png", dpi=500)
 
 
-def load_data(npydirs):
+def load_block_data(blockdirs):
     all_welos = np.array([])
     all_belos = np.array([])
-    for npydir in npydirs:
-        print(f"loading {npydir}...")
-        # with open(f"{npydir}/fmd.json") as f:
-        #    md = json.load(f)
-        md = np.load(f"{npydir}/md.npy", allow_pickle=True).item()
-        # gs = np.memmap(f"{npydir}/gs.npy", mode="r", dtype="int64", shape=md["ngames"])
-        welos = np.memmap(
-            f"{npydir}/welos.npy", mode="r", dtype="int16", shape=(md["ngames"],)
-        )
-        belos = np.memmap(
-            f"{npydir}/belos.npy", mode="r", dtype="int16", shape=(md["ngames"],)
-        )
+    blocks = []
+    for dn in blockdirs:
+        print(f"loading {dn}...")
+        gs = np.memmap(f"{dn}/gamestarts.npy", mode="r", dtype="int64")
+        clk = np.memmap(f"{dn}/clk.npy", mode="r", dtype="int16")
+        blocks.append({"gs": gs, "clk": clk})
+        welos = np.memmap(f"{dn}/welos.npy", mode="r", dtype="int16")
+        belos = np.memmap(f"{dn}/belos.npy", mode="r", dtype="int16")
         all_welos = np.concatenate([all_welos, welos[:]])
-        all_belos = belos = np.concatenate([all_belos, belos[:]])
+        all_belos = np.concatenate([all_belos, belos[:]])
     print("done")
-    return all_welos, all_belos
+    return all_welos, all_belos, blocks
+
+
+def load_filtered_data(npydir):
+    with open(f"{npydir}/fmd.json") as f:
+        fmd = json.load(f)
+    elos = np.memmap(
+        f"{npydir}/elo.npy", mode="r", dtype="int16", shape=(fmd["ngames"], 2)
+    )
+    welos = elos[:, 0]
+    belos = elos[:, 1]
+    return welos, belos
 
 
 if __name__ == "__main__":
-    import sys
+    args = parser.parse_args()
+    if "fmd.json" in os.listdir(args.npydir):
+        welos, belos = load_filtered_data(args.npydir)
+    else:
+        blockdirs = [
+            os.path.abspath(f"{args.npydir}/{dn}")
+            for dn in os.listdir(args.npydir)
+            if "block-" in dn
+        ]
+        welos, belos, blocks = load_block_data(blockdirs)
 
-    welos, belos = load_data(sys.argv[1:])
-    elo_matrix(welos, belos)
+    # elo_matrix(welos, belos)
+    time_hist(blocks)
