@@ -8,62 +8,91 @@ parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFo
 parser.add_argument(
     "npydir", help="top-level directory containing either fmd.json or block folders"
 )
+parser.add_argument(
+    "--elo_hist",
+    default=False,
+    action="store_true",
+    help="histogram of Elos for white and black",
+)
+parser.add_argument(
+    "--elo_matrix", default=False, action="store_true", help="generate Elo 2d histogram"
+)
+parser.add_argument(
+    "--time_hist",
+    default=False,
+    action="store_true",
+    help="generate histogram of game time controls",
+)
 
 
 def elo_matrix(
-    welos, belos, edges=[1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
+    welos,
+    belos,
+    plot=False,
+    edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600],
+    spacing=10,
 ):
-    """
-    def get_bins(elos):
-        diff_mtx = np.subtract.outer(elos, edges)
-        diff_mtx[diff_mtx > 0] = float("-inf")
-        idx = diff_mtx.argmax(axis=1)
-        return idx
-
-    def get_mtx_idx(welos, belos):
-        wbin = get_bins(welos)
-        bbin = get_bins(belos)
-        mtx = np.zeros((len(edges), len(edges)))
-        for m, n in zip(wbin, bbin):
-            mtx[m, n] += 1
-        return mtx
-    """
     maxelo = max(welos.max(), belos.max())
     edges.append(maxelo + 1)
     H, w_edges, b_edges = np.histogram2d(welos, belos, bins=(edges, edges))
-    fig, ax = plt.subplots()
-    ax.pcolormesh(w_edges, b_edges, np.log10(H.T), cmap="rainbow")
-    plt.savefig("elo_matrix.png", dpi=500)
-    for row in reversed(np.log10(H)):
+    if plot:
+        fig, ax = plt.subplots()
+        ax.pcolormesh(w_edges, b_edges, np.log10(H.T), cmap="rainbow")
+        plt.savefig("elo_matrix.png", dpi=500)
+
+    for i, row in enumerate(list(reversed(np.log10(H)))):
+        print(str(w_edges[i + 1]).rjust(spacing), end="")
         for c in row:
-            print(f"{c:.2f}", end="   ")
+            print(f"{c:.2f}".rjust(spacing), end="")
         print()
+    print("".rjust(spacing), end="")
+    for e in b_edges[1:]:
+        print(str(e).rjust(spacing), end="")
+    print()
 
 
 def elo_hist(
-    md,
     welos,
     belos,
+    plot=False,
     edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, float("inf")],
 ):
-    x = np.arange(len(edges) - 1)
-    width = 0.33
-    mult = 0
-    ax = plt.figure().add_subplot()
-    hw, eb = np.histogram(welos, edges)
-    hb, eb = np.histogram(belos, edges)
-    for name, data in [("white", hw), ("black", hb)]:
-        offset = width * mult
-        ax.bar(x + offset, data, width, label=name)
-        mult += 1
-    ax.set_ylabel("# games")
-    ax.set_yscale("log")
-    edge_labels = [str(e) for e in edges[1:]]
-    edge_labels[-1] = f">{edge_labels[-2]}"
-    ax.set_xticks(x + width, edge_labels)
-    ax.legend(loc="upper right")
+    max_elo = max(welos.max(), belos.max())
+    hw, es = np.histogram(welos, edges)
+    hb, es = np.histogram(belos, edges)
 
-    plt.savefig("elos.png", dpi=500)
+    es[-1] = max_elo
+
+    def print_h(hs, es):
+        for h in hs:
+            print(f"{np.log10(h):.2f}".rjust(8), end="")
+        print()
+        for e in es[1:]:
+            print(str(int(e)).rjust(8), end="")
+        print()
+
+    print("white:")
+    print_h(hw, es)
+    print("black:")
+    print_h(hb, es)
+
+    if plot:
+        x = np.arange(len(edges) - 1)
+        width = 0.33
+        mult = 0
+        ax = plt.figure().add_subplot()
+        for name, data in [("white", hw), ("black", hb)]:
+            offset = width * mult
+            ax.bar(x + offset, data, width, label=name)
+            mult += 1
+        ax.set_ylabel("# games")
+        ax.set_yscale("log")
+        edge_labels = [str(e) for e in edges[1:]]
+        edge_labels[-1] = f">{edge_labels[-2]}"
+        ax.set_xticks(x + width, edge_labels)
+        ax.legend(loc="upper right")
+
+        plt.savefig("elos.png", dpi=500)
 
 
 def time_hist(blocks, edges=[180, 300, 600, 900, 1800, float("inf")]):
@@ -92,20 +121,14 @@ def game_lengths(md, gs):
 
 
 def load_block_data(blockdirs):
-    all_welos = np.array([])
-    all_belos = np.array([])
     blocks = []
     for dn in blockdirs:
-        print(f"loading {dn}...")
         gs = np.memmap(f"{dn}/gamestarts.npy", mode="r", dtype="int64")
         clk = np.memmap(f"{dn}/clk.npy", mode="r", dtype="int16")
-        blocks.append({"gs": gs, "clk": clk})
         welos = np.memmap(f"{dn}/welos.npy", mode="r", dtype="int16")
         belos = np.memmap(f"{dn}/belos.npy", mode="r", dtype="int16")
-        all_welos = np.concatenate([all_welos, welos[:]])
-        all_belos = np.concatenate([all_belos, belos[:]])
-    print("done")
-    return all_welos, all_belos, blocks
+        blocks.append({"gs": gs, "clk": clk, "welos": welos, "belos": belos})
+    return blocks
 
 
 def load_filtered_data(npydir):
@@ -114,22 +137,55 @@ def load_filtered_data(npydir):
     elos = np.memmap(
         f"{npydir}/elo.npy", mode="r", dtype="int16", shape=(fmd["ngames"], 2)
     )
-    welos = elos[:, 0]
-    belos = elos[:, 1]
+    gs = np.memmap(f"{npydir}/gs.npy", mode="r", dtype="int64")
+    data = {"welos": elos[:, 0], "belos": elos[:, 1], "gs": gs}
+    for name in ["train", "val", "test"]:
+        data[name] = np.memmap(
+            f"{npydir}/{name}.npy", mode="r", dtype="int64", shape=fmd[f"{name}_shape"]
+        )
+    blocks = []
+    for dn in fmd["block_dirs"]:
+        clk = np.memmap(f"{npydir}/{dn}/clk.npy", mode="r", dtype="int16")
+        blocks.append({"clk": clk})
+    blocks[0].update(data)
+
+    return blocks
+
+
+def get_elos(blocks, fmd):
+    if fmd:
+        welos = blocks[0]["welos"]
+        belos = blocks[0]["belos"]
+    else:
+        welos = np.array([])
+        belos = np.array([])
+        print("collecting block elos...")
+        for blk in blocks:
+            welos = np.concatenate([welos, blk["welos"]])
+            belos = np.concatenate([belos, blk["belos"]])
     return welos, belos
 
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    if "fmd.json" in os.listdir(args.npydir):
-        welos, belos = load_filtered_data(args.npydir)
+    fmd = "fmd.json" in os.listdir(args.npydir)
+    if fmd:
+        blocks = load_filtered_data(args.npydir)
     else:
         blockdirs = [
             os.path.abspath(f"{args.npydir}/{dn}")
             for dn in os.listdir(args.npydir)
             if "block-" in dn
         ]
-        welos, belos, blocks = load_block_data(blockdirs)
+        blocks = load_block_data(blockdirs)
 
-    # elo_matrix(welos, belos)
-    time_hist(blocks)
+    if args.elo_matrix or args.elo_hist:
+        welos, belos = get_elos(blocks, fmd)
+        if args.elo_hist:
+            elo_hist(welos, belos)
+        if args.elo_matrix:
+            elo_matrix(welos, belos)
+
+    if args.time_hist:
+        assert not fmd
+        time_hist(blocks)

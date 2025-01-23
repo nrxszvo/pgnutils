@@ -1,4 +1,4 @@
-datadir: datasets/lichess_180_10800_60_122024/split_21_30_100k_900208
+datadir: datasets/lichess_180_10800_60_122024/split_31_30_1m_900208
 elo_edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
 model_args:
   dim: 1024 
