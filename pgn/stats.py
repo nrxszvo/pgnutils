@@ -30,7 +30,7 @@ def elo_matrix(
     belos,
     plot=False,
     edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600],
-    spacing=10,
+    spacing=12,
 ):
     maxelo = max(welos.max(), belos.max())
     edges.append(maxelo + 1)
@@ -40,14 +40,14 @@ def elo_matrix(
         ax.pcolormesh(w_edges, b_edges, np.log10(H.T), cmap="rainbow")
         plt.savefig("elo_matrix.png", dpi=500)
 
-    for i, row in enumerate(list(reversed(np.log10(H)))):
-        print(str(w_edges[i + 1]).rjust(spacing), end="")
+    for i, row in reversed(list(enumerate(H))):
+        print(str(int(w_edges[i + 1])).rjust(spacing), end="")
         for c in row:
-            print(f"{c:.2f}".rjust(spacing), end="")
+            print(str(int(c)).rjust(spacing), end="")
         print()
     print("".rjust(spacing), end="")
     for e in b_edges[1:]:
-        print(str(e).rjust(spacing), end="")
+        print(str(int(e)).rjust(spacing), end="")
     print()
 
 
@@ -134,35 +134,44 @@ def load_block_data(blockdirs):
 def load_filtered_data(npydir):
     with open(f"{npydir}/fmd.json") as f:
         fmd = json.load(f)
-    elos = np.memmap(
-        f"{npydir}/elo.npy", mode="r", dtype="int16", shape=(fmd["ngames"], 2)
-    )
-    gs = np.memmap(f"{npydir}/gs.npy", mode="r", dtype="int64")
-    data = {"welos": elos[:, 0], "belos": elos[:, 1], "gs": gs}
+
+    data = {}
     for name in ["train", "val", "test"]:
         data[name] = np.memmap(
             f"{npydir}/{name}.npy", mode="r", dtype="int64", shape=fmd[f"{name}_shape"]
         )
+
     blocks = []
     for dn in fmd["block_dirs"]:
-        clk = np.memmap(f"{npydir}/{dn}/clk.npy", mode="r", dtype="int16")
-        blocks.append({"clk": clk})
+        clk = np.memmap(f"{dn}/clk.npy", mode="r", dtype="int16")
+        welos = np.memmap(f"{dn}/welos.npy", mode="r", dtype="int16")
+        belos = np.memmap(f"{dn}/belos.npy", mode="r", dtype="int16")
+        gs = np.memmap(f"{dn}/gamestarts.npy", mode="r", dtype="int64")
+        blocks.append({"welos": welos, "belos": belos, "gs": gs, "clk": clk})
     blocks[0].update(data)
 
     return blocks
 
 
 def get_elos(blocks, fmd):
-    if fmd:
-        welos = blocks[0]["welos"]
-        belos = blocks[0]["belos"]
-    else:
-        welos = np.array([])
-        belos = np.array([])
-        print("collecting block elos...")
-        for blk in blocks:
-            welos = np.concatenate([welos, blk["welos"]])
-            belos = np.concatenate([belos, blk["belos"]])
+    welos = np.array([])
+    belos = np.array([])
+    for i, blk in enumerate(blocks):
+        print(f"collecting block {i} elos...", end="\r")
+        if fmd:
+            blk_welos = np.array([])
+            blk_belos = np.array([])
+            for name in ["train", "val", "test"]:
+                data = blocks[0][name]
+                indices = data[data[:, -1] == i][:, 0]
+                blk_welos = np.concatenate([blk_welos, blk["welos"][indices]])
+                blk_belos = np.concatenate([blk["belos"][indices]])
+        else:
+            blk_welos = blk["welos"]
+            blk_belos = blk["belos"]
+        welos = np.concatenate([welos, blk_welos])
+        belos = np.concatenate([belos, blk_belos])
+    print()
     return welos, belos
 
 
