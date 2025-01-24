@@ -98,7 +98,6 @@ class MMCDataset(Dataset):
         opening_moves,
         indices,
         blocks,
-        elos,
         elo_edges,
         max_nsamp=None,
     ):
@@ -111,7 +110,6 @@ class MMCDataset(Dataset):
             self.nsamp = min(max_nsamp, self.nsamp)
 
         self.blocks = blocks
-        self.elos = elos
         self.elo_edges = elo_edges
 
     def __len__(self):
@@ -123,17 +121,20 @@ class MMCDataset(Dataset):
                 return i
 
     def __getitem__(self, idx):
-        gs, nmoves, gidx, blk = self.indices[idx]
+        gidx, gs, nmoves, blk = self.indices[idx]
+
+        mvids = self.blocks[blk]["mvids"]
+        welo = self.blocks[blk]["welos"][gidx]
+        belo = self.blocks[blk]["belos"][gidx]
+
         n_inp = min(self.seq_len, nmoves)
         inp = np.empty(n_inp, dtype="int32")
-        mvids = self.blocks[blk]["mvids"]
         inp[:] = mvids[gs : gs + n_inp]
 
         opening = np.empty(self.opening_moves, dtype="int64")
         opening[:] = mvids[gs : gs + self.opening_moves]
 
         tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
-        welo, belo = self.elos[gidx]
         tgt[::2] = self._get_group(welo)
         tgt[1::2] = self._get_group(belo)
 
@@ -214,12 +215,6 @@ def load_data(dirname, load_cheatdata=False):
         fmd = json.load(f)
     data = {
         "fmd": fmd,
-        "elos": np.memmap(
-            os.path.join(dirname, "elo.npy"),
-            mode="r",
-            dtype="int16",
-            shape=(fmd["ngames"], 2),
-        ),
         "train": np.memmap(
             os.path.join(dirname, "train.npy"),
             mode="r",
@@ -246,6 +241,18 @@ def load_data(dirname, load_cheatdata=False):
         blocks.append(
             {
                 "md": md,
+                "welos": np.memmap(
+                    os.path.join(dn, "welos.npy"),
+                    mode="r",
+                    dtype="int16",
+                    shape=md["ngames"],
+                ),
+                "belos": np.memmap(
+                    os.path.join(dn, "belos.npy"),
+                    mode="r",
+                    dtype="int16",
+                    shape=md["ngames"],
+                ),
                 "mvids": np.memmap(
                     os.path.join(dn, "mvids.npy"),
                     mode="r",
@@ -291,7 +298,6 @@ class MMCDataModule(L.LightningDataModule):
                 self.opening_moves,
                 self.train,
                 self.blocks,
-                self.elos,
                 self.elo_edges,
             )
             self.valset = MMCDataset(
@@ -299,7 +305,6 @@ class MMCDataModule(L.LightningDataModule):
                 self.opening_moves,
                 self.val,
                 self.blocks,
-                self.elos,
                 self.elo_edges,
             )
         if stage == "validate":
@@ -308,7 +313,6 @@ class MMCDataModule(L.LightningDataModule):
                 self.opening_moves,
                 self.val,
                 self.blocks,
-                self.elos,
                 self.elo_edges,
             )
 
@@ -320,7 +324,6 @@ class MMCDataModule(L.LightningDataModule):
                     self.test,
                     self.cheatdata,
                     self.mvids,
-                    self.elos,
                     self.elo_edges,
                     self.max_testsamp,
                 )
@@ -330,7 +333,6 @@ class MMCDataModule(L.LightningDataModule):
                     self.opening_moves,
                     self.test,
                     self.blocks,
-                    self.elos,
                     self.elo_edges,
                     self.max_testsamp,
                 )

@@ -19,6 +19,7 @@
 
 using json = nlohmann::json;
 using namespace std::chrono_literals;
+namespace fs = std::filesystem;
 
 ABSL_FLAG(std::string, npydir, "", "directory containing block folders of npy raw data files");
 ABSL_FLAG(int, minMoves, 11, "minimum number of game moves to be included in filtered dataset");
@@ -51,63 +52,84 @@ public:
 struct Split {
 	int64_t nSamp;
 	int64_t nGames;
+	std::string fp;
 	std::ofstream idxData;
 	std::string name;
-	Split(std::string name): name(name), nSamp(0), nGames(0) {};
+	Split(std::string name, std::string outdir): name(name), nSamp(0), nGames(0), fp(outdir + "/" + name + ".npy") {
+	   	idxData = std::ofstream(fp, std::ios::binary);
+	}
 };
 
 class SplitManager {
-	std::vector<Split> splits;
+	std::vector<std::vector<Split>> splits;
+	std::vector<std::string> names;
 	int16_t maxElo;
-	int64_t nGames; 
 	int minMoves;
 	RandDS rds;
-	std::ofstream gsfile;
-	std::ofstream elofile;
 	std::string outdir;
 public:
-	SplitManager(std::string& outdir, std::vector<std::string>& names, float trainp, float testp, int minMoves)
-		: gsfile(outdir + "/gs.npy", std::ios::binary), elofile(outdir + "/elo.npy", std::ios::binary), maxElo(0), nGames(0), minMoves(minMoves), rds(trainp, testp), outdir(outdir) 
+	struct Args {
+		std::string outdir;
+		int nThreads;
+		std::vector<std::string> names;
+		float trainp;
+		float testp;
+		int minMoves;
+	};
+	SplitManager(Args& args)
+		: names(args.names), maxElo(0), minMoves(args.minMoves), rds(args.trainp, args.testp), outdir(args.outdir) 
 	{
-		for (auto name: names) {
-			splits.push_back(Split(name));
+		splits = std::vector<std::vector<Split>>(args.nThreads);
+		for (int threadId=0; threadId < args.nThreads; threadId++) {
+			for (auto name: names) {
+				std::string tName = "thread-" + std::to_string(threadId) + "-" + name;
+				splits[threadId].push_back(Split(tName, outdir));
+			}
 		}
 	}
-	auto insertCoords(int64_t gStart, int64_t gLength, int16_t welo, int16_t belo, int64_t blockId){
+	void insertCoords(int threadId, int64_t gIdx, int64_t gStart, int64_t gLength, int64_t blockId, int16_t welo, int16_t belo){
 		maxElo = std::max(maxElo, std::max(welo, belo));
 		int dsIdx = rds.get();
 		
-		splits[dsIdx].idxData.write((char*)&gStart, sizeof(int64_t));
-		splits[dsIdx].idxData.write((char*)&gLength, sizeof(int64_t));
-		splits[dsIdx].idxData.write((char*)&nGames, sizeof(int64_t));
-		splits[dsIdx].idxData.write((char*)&blockId, sizeof(int64_t));
-		splits[dsIdx].nGames++;
-
-		gsfile.write((char*)&gStart, sizeof(gStart));
-		elofile.write((char*)&welo, sizeof(welo));
-		elofile.write((char*)&belo, sizeof(belo));
-
-		nGames++;
+		splits[threadId][dsIdx].idxData.write((char*)&gIdx, sizeof(int64_t));
+		splits[threadId][dsIdx].idxData.write((char*)&gStart, sizeof(int64_t));
+		splits[threadId][dsIdx].idxData.write((char*)&gLength, sizeof(int64_t));
+		splits[threadId][dsIdx].idxData.write((char*)&blockId, sizeof(int64_t));
+		splits[threadId][dsIdx].nGames++;
 	};
 	int64_t getNGames() {
+		int64_t nGames = 0;
+		for (auto& ttv: splits) {
+			for (auto& split: ttv) {
+				nGames += split.nGames;
+			}
+		}
 		return nGames;
 	}
 	int16_t getMaxElo() {
 		return maxElo;
 	}
 	void finalizeData(std::vector<std::string>& blockDirs) {
-		gsfile.close();
-		elofile.close();
-
 		json md;
-		md["ngames"] = nGames;
+		md["ngames"] = getNGames();
 		md["min_moves"] = minMoves;
 		md["block_dirs"] = blockDirs;	
-		for (int i=0; i<splits.size(); i++) {
-			Split& split = splits[i];
-			split.idxData.close();
-			md[split.name + "_shape"] = {split.nGames,4};
-			md[split.name + "_n"] = split.nGames;
+		std::cout << std::endl << "Consolidating output data..." << std::endl;
+		for (int i=0; i<splits[0].size(); i++) {
+			int64_t nGames = 0;
+			std::ofstream consOf = std::ofstream(outdir + "/" + names[i] + ".npy", std::ios::binary);
+			for (int threadId=0; threadId < splits.size(); threadId++) {
+				Split& split = splits[threadId][i];
+				nGames += split.nGames;
+				split.idxData.close();
+				std::ifstream thrIf = std::ifstream(split.fp, std::ios::binary);
+				consOf << thrIf.rdbuf();
+				thrIf.close();
+				fs::remove(split.fp);
+			}
+			consOf.close();
+			md[names[i] + "_shape"] = {nGames,4};
+			md[names[i] + "_n"] = nGames;
 		}
 		std::ofstream mdfile(outdir + "/fmd.json");
 		mdfile << md << std::endl;
@@ -151,17 +173,28 @@ class BlockProcessor {
 	std::vector<std::vector<int>> eloHist;
 	SplitManager& splitMgr;
 	std::mutex histoMtx;
-	std::mutex insertMtx;
 	std::vector<int64_t> blockGames;
+	std::vector<std::shared_ptr<MMCRawDataReader>> readers;
 public:
-	BlockProcessor(int nBlocks, int nThreadsPerBlock, int minMoves, int minTime, int maxGames, int maxGamesLeniency, std::vector<int>& eloEdges, SplitManager& splitMgr)
-		: minMoves(minMoves), minTime(minTime), maxGames(maxGames), leniency(maxGamesLeniency), eloEdges(eloEdges), splitMgr(splitMgr) 
+	struct Args {
+		int nBlocks;
+		int nThreadsPerBlock;
+		int minMoves;
+		int minTime;
+		int maxGames;
+		int maxGamesLeniency;
+		std::vector<int> eloEdges;
+		SplitManager& splitMgr;
+		Args(SplitManager& splitMgr): splitMgr(splitMgr) {};
+	};
+	BlockProcessor(Args& args)
+		: minMoves(args.minMoves), minTime(args.minTime), maxGames(args.maxGames), leniency(args.maxGamesLeniency), eloEdges(args.eloEdges), splitMgr(args.splitMgr) 
 	{
 		eloHist = std::vector(eloEdges.size(), std::vector(eloEdges.size(), 0));
-		blockGames = std::vector(nBlocks*nThreadsPerBlock, (int64_t)0);
+		blockGames = std::vector<int64_t>(args.nBlocks*args.nThreadsPerBlock, 0);
 	}
 
-	int64_t totalGames() {
+	int64_t completedGames() {
 		int64_t total = 0;
 		for (auto count: blockGames) {
 			total += count;
@@ -171,14 +204,24 @@ public:
 
 	std::vector<std::vector<int>>& getEloHist() { return eloHist; }
 
-	void processBlock(std::string& blkFn, int blockId, int threadId, int64_t startGame, int64_t nGames) {
-		auto mrd = MMCRawDataReader(blkFn, startGame, nGames);
-		std::vector<int16_t> clk;
-		int64_t gamesSoFar = 0;
-		std::vector<std::vector<int>> localHist = std::vector(eloEdges.size(), std::vector(eloEdges.size(), 0));
+	void addReader(std::shared_ptr<MMCRawDataReader> mrd) {
+		readers.push_back(mrd);
+	}
 
+	int64_t totalGamesEstimate() {
+		int64_t totalGames = 0;
+		for (auto mrd: readers) {
+			totalGames += mrd->getTotalGames();
+		}
+		return totalGames;
+	}
+
+	void processBlock(int blockId, int threadId) {
+		std::vector<int16_t> clk;
+		auto localHist = std::vector(eloEdges.size(), std::vector(eloEdges.size(), 0));
+		auto mrd = readers[threadId];
 		while (true) {
-			auto [bytesRead, gameStart, whiteElo, blackElo] = mrd.nextGame(clk);
+			auto [bytesRead, gIdx, gameStart, whiteElo, blackElo] = mrd->nextGame(clk);
 			if (bytesRead == 0) { 
 				std::lock_guard<std::mutex> lock(histoMtx);
 				for (int i=0; i<eloHist.size(); i++) {
@@ -195,83 +238,93 @@ public:
 			int bbin = getEloBin(blackElo, eloEdges);
 			if (eloHist[wbin][bbin] >= maxGames) continue;
 
-			localHist[wbin][bbin]++;
-			if (blockGames[threadId] % leniency == 0) {
-				std::lock_guard<std::mutex> lock(histoMtx);
-				for (int i=0; i<eloHist.size(); i++) {
-					for (int j=0; j<eloHist.size(); j++) {
-						eloHist[i][j] += localHist[i][j];
-						localHist[i][j] = 0;
-					}
-				}
-			}
-			
 			int idx = clk.size()-1;	
 			while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
+
 			if (idx >= minMoves) {
-				std::lock_guard<std::mutex> lock(insertMtx);
-				splitMgr.insertCoords(gameStart, idx+1, whiteElo, blackElo, blockId);
+				localHist[wbin][bbin]++;
+				if (blockGames[threadId] % leniency == 0) {
+					std::lock_guard<std::mutex> lock(histoMtx);
+					for (int i=0; i<eloHist.size(); i++) {
+						for (int j=0; j<eloHist.size(); j++) {
+							eloHist[i][j] += localHist[i][j];
+							localHist[i][j] = 0;
+						}
+					}
+				}
+				splitMgr.insertCoords(threadId, gIdx, gameStart, idx+1, blockId, whiteElo, blackElo);
 			}
 		}
 	}
 };
 
 void filterData(std::vector<std::string>& npydir, int nThreadsPerBlock, int minMoves, int minTime, std::string& outdir, float trainp, float testp, std::vector<int>& eloEdges, int maxGames, int maxGamesLeniency) {
-	size_t totalGames = 0;
 	std::vector<int64_t> gamesPerThread;
-	std::cout.precision(2);
 	for (int blkId=0; blkId < npydir.size(); blkId++) {
 		MMCRawDataReader mrd = MMCRawDataReader(npydir[blkId]);
-		std::cout << "Block " << blkId << ": " << (float)mrd.getTotalGames() << " games" << std::endl;
-		gamesPerThread.push_back(mrd.getTotalGames()/nThreadsPerBlock);
-		totalGames += mrd.getTotalGames();
+		int64_t blockGames = mrd.getTotalGames();
+		double gpt = (double)blockGames/nThreadsPerBlock;
+		gamesPerThread.push_back((int64_t)(std::ceil(gpt)));
 	}
-	std::cout << "Total games: " << (float)totalGames << std::endl;
 
-	std::vector<std::string> names = {"train", "val", "test"};
-	SplitManager splitMgr = SplitManager(outdir, names, trainp, testp, minMoves);
-	BlockProcessor blkProc(npydir.size(), nThreadsPerBlock, minMoves, minTime, maxGames, maxGamesLeniency, eloEdges, splitMgr);
+	SplitManager::Args smArgs;
+	smArgs.outdir = outdir;
+	smArgs.nThreads = npydir.size()*nThreadsPerBlock;
+	smArgs.names = {"train", "val", "test"};
+	smArgs.trainp = trainp;
+	smArgs.testp = testp;
+	smArgs.minMoves = minMoves;
+
+	SplitManager splitMgr = SplitManager(smArgs);
+
+	BlockProcessor::Args bpArgs(splitMgr);
+	bpArgs.nBlocks = npydir.size();
+	bpArgs.nThreadsPerBlock = nThreadsPerBlock;
+	bpArgs.minMoves = minMoves;
+	bpArgs.minTime = minTime;
+	bpArgs.maxGames = maxGames;
+	bpArgs.maxGamesLeniency = maxGamesLeniency;
+	bpArgs.eloEdges = eloEdges;
+
+	BlockProcessor blkProc(bpArgs);
 
 	std::vector<std::shared_ptr<std::thread> > threads;
-	auto processBlock = [&](BlockProcessor& blkProc, std::string dn, int blkId, int threadId, int64_t startGame, int64_t nGames) {
-		return blkProc.processBlock(dn, blkId, threadId, startGame, nGames);
+	auto processBlock = [](BlockProcessor& blkProc, int blkId, int threadId) {
+		return blkProc.processBlock(blkId, threadId);
 	};
 
 	for (int blockId = 0; blockId < npydir.size(); blockId++) {
+		int64_t nGames = gamesPerThread[blockId];
 		for (int i=0; i<nThreadsPerBlock; i++) {
-			int64_t nGames = gamesPerThread[blockId];
 			if (i == nThreadsPerBlock-1) nGames = -1;
+			int64_t startGame = i*gamesPerThread[blockId];
+			auto mrd = std::make_shared<MMCRawDataReader>(npydir[blockId], startGame, nGames);
+			blkProc.addReader(mrd);
+
 			threads.push_back(std::make_shared<std::thread>(
 				processBlock, 
 				std::ref(blkProc), 
-				npydir[blockId], 
 				blockId, 
-				blockId*nThreadsPerBlock+i,
-				i*gamesPerThread[blockId], nGames 
+				blockId*nThreadsPerBlock+i
 			));
 		}
 	}
 
 	auto start = hrc::now();
-	auto last = start;
-	auto remaining = totalGames;
-	int64_t lastCompleted = 0;
 	while (true) {
-		std::this_thread::sleep_for(5000ms);
-		int64_t completedGames = blkProc.totalGames();
-		int complete = (int)(100*(float)completedGames / totalGames);
-		auto [eta, now] = getEta(remaining, completedGames-lastCompleted, last); 
-		remaining -= (completedGames-lastCompleted);
-		lastCompleted = completedGames;
-		last = now;
-		std::cout << complete << "% done (eta: " << eta << ")\r" << std::flush;
-		if (complete >= 99) break;
+		std::this_thread::sleep_for(500ms);
+		int64_t completedGames = blkProc.completedGames();
+		int64_t totalGamesEst = blkProc.totalGamesEstimate();
+		int complete = (int)(100*(double)completedGames / totalGamesEst);
+		auto [eta, now] = getEta(totalGamesEst, completedGames, start); 
+		std::cout << completedGames << " out of " << totalGamesEst << " (" << complete << "% done, eta: " << eta << ")\r" << std::flush;
+		if (complete == 100) break;
 	}
 	for (auto thread: threads) {
 		thread->join();
 	}
 	splitMgr.finalizeData(npydir);
-	printReport(splitMgr.getNGames(), blkProc.totalGames(), eloEdges, blkProc.getEloHist(), splitMgr.getMaxElo()); 
+	printReport(splitMgr.getNGames(), blkProc.completedGames(), eloEdges, blkProc.getEloHist(), splitMgr.getMaxElo()); 
 
 	auto stop = hrc::now();	
 	auto ellapsed = getEllapsedStr(start, stop);
@@ -283,7 +336,7 @@ std::vector<std::string> getBlockDirs(const std::string& npydir)
 	const re2::RE2 BLOCK_PAT = ".*block-([0-9]+).*";
 	int64_t blockId;
 	int nBlocks = 0;
-	for(auto& p : std::filesystem::recursive_directory_iterator(npydir)) {
+	for(auto& p : fs::recursive_directory_iterator(npydir)) {
 		if (p.is_directory()) {
 			std::string dn = p.path().string();
 			if (re2::RE2::PartialMatch(dn, BLOCK_PAT, &blockId)) {
@@ -292,7 +345,7 @@ std::vector<std::string> getBlockDirs(const std::string& npydir)
 		}
 	}
 	std::vector<std::string> blockDns(nBlocks);
-	for(auto& p : std::filesystem::recursive_directory_iterator(npydir)) {
+	for(auto& p : fs::recursive_directory_iterator(npydir)) {
 		if (p.is_directory()) {
 			std::string dn = p.path().string();
 			if (re2::RE2::PartialMatch(dn, BLOCK_PAT, &blockId)) {
