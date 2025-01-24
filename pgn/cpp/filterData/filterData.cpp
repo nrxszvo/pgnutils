@@ -28,7 +28,7 @@ ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
 ABSL_FLAG(float, trainp, 0.9, "percentage of dataset for training");
 ABSL_FLAG(float, testp, 0.08, "percentage of dataset for testing");
 ABSL_FLAG(std::vector<std::string>, eloEdges, std::vector<std::string>({"1000","1200","1400","1600","1800","2000","2200","2400","2600"}), "ELO bin edges for ensuring even distribution of ELOs");
-ABSL_FLAG(int, maxGamesPerElo, 5000000, "maximum number of games per ELO group");
+ABSL_FLAG(int, maxGamesPerElo, -1, "maximum number of games per ELO group (-1 to disable)");
 ABSL_FLAG(int, nThreadsPerBlock, 1, "number of threads per block");
 ABSL_FLAG(int, maxGamesLeniency, 100, "allow maxGamesPerElo to be exceeded by approx. this number in order to greatly speed up parallel processing");
 
@@ -236,14 +236,14 @@ public:
 
 			int wbin = getEloBin(whiteElo, eloEdges);
 			int bbin = getEloBin(blackElo, eloEdges);
-			if (eloHist[wbin][bbin] >= maxGames) continue;
+			if (maxGames > 0 && eloHist[wbin][bbin] >= maxGames) continue;
 
 			int idx = clk.size()-1;	
 			while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
 
 			if (idx >= minMoves) {
 				localHist[wbin][bbin]++;
-				if (blockGames[threadId] % leniency == 0) {
+				if (maxGames > 0 && blockGames[threadId] % leniency == 0) {
 					std::lock_guard<std::mutex> lock(histoMtx);
 					for (int i=0; i<eloHist.size(); i++) {
 						for (int j=0; j<eloHist.size(); j++) {
