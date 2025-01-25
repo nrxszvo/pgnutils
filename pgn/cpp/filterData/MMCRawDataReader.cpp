@@ -28,6 +28,7 @@ MMCRawDataReader::MMCRawDataReader(std::string npydir, int64_t startGame, int64_
 	beloIf.read((char*)&blackElo, sizeof(blackElo));
 
 	clkIf = std::ifstream(npydir + "/clk.npy", std::ios::binary);
+	clkIf.seekg(gameStart*sizeof(int16_t), clkIf.beg);
 }
 
 int64_t MMCRawDataReader::getTotalGames() {
