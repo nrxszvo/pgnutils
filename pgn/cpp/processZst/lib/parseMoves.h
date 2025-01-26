@@ -10,9 +10,10 @@ struct State {
 	int welo;
 	int belo;
 	int time;
+	int inc;
 	bool validTerm;
 	std::string moveStr;
-	State(): weloStr(""), beloStr(""), welo(0), belo(0), time(0), validTerm(false), moveStr("") {};
+	State(): weloStr(""), beloStr(""), welo(0), belo(0), time(0), inc(0), validTerm(false), moveStr("") {};
 	void init() {
 		this->weloStr = "";
 		this->beloStr = "";
@@ -34,6 +35,7 @@ public:
 	int getBelo();
 	std::string getMoveStr();
 	int getTime();
+	int getInc();
 private:
 	State state;
 	bool reinit;

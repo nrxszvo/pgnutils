@@ -123,7 +123,7 @@ def main(
                 tmpdir = tempfile.TemporaryDirectory()
                 print_safe(f"{npyname}: processing zst into {tmpdir.name}...")
                 cmd = [
-                    "./" + parser_bin,
+                    parser_bin,
                     "--zst",
                     zst_fn,
                     "--name",
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         help="txt file containing list of pgn zips to download and parse",
     )
     parser.add_argument("--npy", default="npy_w_clk", help="folder to save npy files")
-    parser.add_argument("--parser", default="processZst", help="parser binary")
+    parser.add_argument("--parser", default="./processZst", help="parser binary")
     parser.add_argument(
         "--n_dl_procs",
         default=2,
@@ -272,7 +272,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--resize_bin",
-        default="resizeMMaps",
+        default="./resizeMMap",
         help="binary for resizing memmaps after all data has been processed",
     )
     args = parser.parse_args()

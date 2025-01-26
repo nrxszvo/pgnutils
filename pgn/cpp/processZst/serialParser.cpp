@@ -1,12 +1,13 @@
 #include "lib/parseMoves.h"
 #include "lib/decompress.h"
 #include "lib/validate.h"
+#include "parser.h"
 #include "utils/utils.h"
 #include "profiling/profiler.h"
 #include "serialParser.h"
 #include <filesystem>
 
-ParserOutput processSerial(std::string zst) {
+std::shared_ptr<ParserOutput> processSerial(std::string zst) {
 
 	DecompressStream decompressor(zst,0,0);
 	PgnProcessor processor(300, 10800, 60);
@@ -14,12 +15,8 @@ ParserOutput processSerial(std::string zst) {
 	int gamestart = 0;
 	int lineno = 0;
 
-	auto welos = std::make_shared<std::vector<int16_t> >();
-	auto belos = std::make_shared<std::vector<int16_t> >();
-	auto gamestarts = std::make_shared<std::vector<int64_t> >();
-	auto mvids = std::make_shared<std::vector<int16_t> >();
-	auto clktimes = std::make_shared<std::vector<int16_t> >();
-
+	auto output = std::make_shared<ParserOutput>();
+	
 	uintmax_t nbytes = std::filesystem::file_size(zst);	
 	size_t bytesRead;
 	uintmax_t bytesProcessed = 0;
@@ -52,13 +49,13 @@ ParserOutput processSerial(std::string zst) {
 					}
 					throw std::runtime_error("evaluation failed");
 				}
-				welos->push_back((short)processor.getWelo());
-				belos->push_back((short)processor.getBelo());
-				gamestarts->push_back(mvids->size());
-				mvids->insert(mvids->end(), moves.begin(), moves.end());
-				clktimes->insert(clktimes->end(), clk.begin(), clk.end());
+				output->welos.push_back((short)processor.getWelo());
+				output->belos.push_back((short)processor.getBelo());
+				output->gamestarts.push_back(output->mvids.size());
+				output->mvids.insert(output->mvids.end(), moves.begin(), moves.end());
+				output->clk.insert(output->clk.end(), clk.begin(), clk.end());
 				
-				int ngames = gamestarts->size();
+				int ngames = output->gamestarts.size();
 				int totalGamesEst = ngames / ((float)bytesProcessed / nbytes);
 				int curProg = int((100.0f / printFreq) * ngames / totalGamesEst);
 				if (curProg > progress) {
@@ -73,5 +70,5 @@ ParserOutput processSerial(std::string zst) {
 			}
 		}
 	}
-	return ParserOutput(welos, belos, gamestarts, mvids, clktimes);	
+	return output;	
 }

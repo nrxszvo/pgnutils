@@ -2,6 +2,7 @@
 #include "lib/decompress.h"
 #include "lib/parseMoves.h"
 #include "lib/validate.h"
+#include "parser.h"
 #include "utils/utils.h"
 #include <stdexcept>
 #include <chrono>
@@ -42,6 +43,8 @@ void loadGamesZst(GameState gs, std::string zst, size_t frameStart, size_t frame
 								gameId, 
 								processor.getWelo(), 
 								processor.getBelo(), 
+								processor.getTime(),
+								processor.getInc(),
 								processor.getMoveStr(),
 								zst + ":" + std::to_string(gamestart)
 							));
@@ -192,13 +195,9 @@ ParallelParser::~ParallelParser() {
 	}
 }
 
-ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requireClk, int printFreq) {
-	auto welos = std::make_shared<std::vector<int16_t> >();
-	auto belos = std::make_shared<std::vector<int16_t> >();
-	auto gamestarts = std::make_shared<std::vector<int64_t> >();
-	auto mvids = std::make_shared<std::vector<int16_t> >();
-	auto clktimes = std::make_shared<std::vector<int16_t> >();
-
+std::shared_ptr<ParserOutput> ParallelParser::parse(std::string zst, std::string name, bool requireClk, int printFreq) {
+	auto output = std::make_shared<ParserOutput>();
+	
 	int64_t ngames = 0;
 	int64_t nGamesLastUpdate = 0;
 	int totalGames = INT_MAX;
@@ -250,11 +249,13 @@ ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requi
 		} else if (md->info == "INVALID") {
 			ngames++;
 		} else if (md->info == "GAME") {
-			welos->push_back(md->welo);
-			belos->push_back(md->belo);
-			gamestarts->push_back(mvids->size());
-			mvids->insert(mvids->end(), md->mvids.begin(), md->mvids.end());
-			clktimes->insert(clktimes->end(), md->clk.begin(), md->clk.end());
+			output->welos.push_back(md->welo);
+			output->belos.push_back(md->belo);
+			output->timeCtl.push_back(md->time);
+			output->increment.push_back(md->inc);
+			output->gamestarts.push_back(output->mvids.size());
+			output->mvids.insert(output->mvids.end(), md->mvids.begin(), md->mvids.end());
+			output->clk.insert(output->clk.end(), md->clk.begin(), md->clk.end());
 			ngames++;
 			
 			int totalGamesEst = ngames / md->progress;
@@ -276,5 +277,5 @@ ParserOutput ParallelParser::parse(std::string zst, std::string name, bool requi
 			throw std::runtime_error("invalid code: " + md->info);
 		}
 	}
-	return ParserOutput(welos, belos, gamestarts, mvids, clktimes);
+	return output;
 }

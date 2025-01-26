@@ -13,23 +13,25 @@ struct Data {
 	int gameId;
 	int welo;
 	int belo;
+	int time;
+	int inc;
 	std::string info; 
 
 	Data() {};
 	Data(int pid, std::string info): pid(pid), info(info) {};
 	Data(int pid, std::string info, int gameId): pid(pid), info(info), gameId(gameId) {};
-	Data(int pid, float progress, int gid, int welo, int belo, std::string info)
-		: pid(pid), progress(progress), gameId(gid), welo(welo), belo(belo), info(info) {};
+	Data(int pid, float progress, int gid, int welo, int belo, int time, int inc, std::string info)
+		: pid(pid), progress(progress), gameId(gid), welo(welo), belo(belo), time(time), inc(inc), info(info) {};
 	Data(int pid, std::shared_ptr<Data> other)
-		: pid(pid), progress(other->progress), gameId(other->gameId), welo(other->welo), belo(other->belo) {};
+		: pid(pid), progress(other->progress), gameId(other->gameId), welo(other->welo), belo(other->belo), time(other->time), inc(other->inc) {};
 };
 
 struct GameData: Data {
 	GameData(): Data() {};
 	GameData(int pid, std::string info) : Data(pid, info) {};
 	GameData(int pid, std::string info, int gameId): Data(pid, info, gameId) {};
-	GameData(int pid, float progress, int gid, int welo, int belo, std::string moveStr, std::string info) 
-		: Data(pid, progress, gid, welo, belo, info), moveStr(moveStr) {};
+	GameData(int pid, float progress, int gid, int welo, int belo, int time, int inc, std::string moveStr, std::string info) 
+		: Data(pid, progress, gid, welo, belo, time, inc, info), moveStr(moveStr) {};
 
 	std::string moveStr;
 };
@@ -73,5 +75,5 @@ class ParallelParser {
 public:
 	ParallelParser(int nReaders, int nMoveProcessors, int minSec, int maxSec, int maxInc);
 	~ParallelParser();
-	ParserOutput parse(std::string zst, std::string name, bool requireClk, int printFreq=60);
+	std::shared_ptr<ParserOutput> parse(std::string zst, std::string name, bool requireClk, int printFreq=60);
 };

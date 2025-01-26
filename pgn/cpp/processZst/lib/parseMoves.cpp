@@ -120,6 +120,7 @@ string processRawLine(string& line, State& state, int minSec, int maxSec, int ma
 				if (re2::RE2::PartialMatch(line, timeRe, &tim, &inc)) {
 					if (inc <= maxInc && tim <= maxSec && tim >= minSec) {
 						state.time = tim;
+						state.inc = inc;
 					}
 				}
 			} else if (line.substr(0, 12) == "[Termination") {
@@ -174,4 +175,7 @@ string PgnProcessor::getMoveStr() {
 }
 int PgnProcessor::getTime() {
 	return this->state.time;
+}
+int PgnProcessor::getInc() {
+	return this->state.inc;
 }

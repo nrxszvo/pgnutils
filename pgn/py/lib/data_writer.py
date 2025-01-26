@@ -40,6 +40,8 @@ class DataWriter:
         self.gsfile = get_fn("gamestarts.npy")
         self.mvidfile = get_fn("mvids.npy")
         self.clkfile = get_fn("clk.npy")
+        self.timefile = get_fn("timeCtl.npy")
+        self.incfile = get_fn("inc.npy")
 
         exists = os.path.exists(self.mdfile)
         if exists:
@@ -55,6 +57,7 @@ class DataWriter:
             assert not os.path.exists(self.gsfile)
             assert not os.path.exists(self.mvidfile)
             assert not os.path.exists(self.clkfile)
+            assert not os.path.exists(self.timefile)
             mode = "w+"
 
         self.all_welos = np.memmap(
@@ -71,6 +74,12 @@ class DataWriter:
         )
         self.all_clk = np.memmap(
             self.clkfile, mode=mode, dtype="int16", shape=alloc_moves
+        )
+        self.all_time = np.memmap(
+            self.timefile, mode=mode, dtype="int16", shape=alloc_games
+        )
+        self.all_inc = np.memmap(
+            self.incfile, mode=mode, dtype="int16", shape=alloc_games
         )
         if not exists:
             self.md = {
@@ -98,6 +107,8 @@ class DataWriter:
             self.all_gamestarts.flush()
             self.all_mvids.flush()
             self.all_clk.flush()
+            self.all_time.flush()
+            self.all_inc.flush()
         except Exception as e:
             print(f"Warning: attempting to flush memmaps raised exception: {e}")
 
@@ -114,6 +125,7 @@ class DataWriter:
             elos = np.load(f"{tmpdir}/elos.npy")
             gamestarts = np.load(f"{tmpdir}/gamestarts.npy")
             moves = np.load(f"{tmpdir}/moves.npy")
+            timeData = np.load(f"{tmpdir}/timeData.npy")
             ngames = gamestarts.shape[0]
             nmoves = moves.shape[1]
 
@@ -144,12 +156,15 @@ class DataWriter:
                 self.all_gamestarts[gs:ge] = gamestarts[:]
                 self.all_mvids[ms:me] = moves[0, :]
                 self.all_clk[ms:me] = moves[1, :]
+                self.all_time[gs:ge] = timeData[0, :]
+                self.all_inc[gs:ge] = timeData[1, :]
 
                 self.md["archives"].append(
                     (npyname, self.md["ngames"], self.md["nmoves"])
                 )
                 self.md["ngames"] += ngames
                 self.md["nmoves"] += nmoves
+                print(f"saving md to {self.mdfile}")
                 np.save(self.mdfile, self.md, allow_pickle=True)
             success = True
         finally:

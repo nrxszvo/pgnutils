@@ -26,6 +26,10 @@ void resizeAll(std::string dn, int64_t ngames, int64_t nmoves) {
 	resize(p, nmoves*sizeof(int16_t));
 	p = fs::path(dn+"/clk.npy");
 	resize(p, nmoves*sizeof(int16_t));
+	p = fs::path(dn+"/timeCtl.npy");
+	resize(p, ngames*sizeof(int16_t));
+	p = fs::path(dn+"/inc.npy");
+	resize(p, ngames*sizeof(int16_t));
 }
 	
 
