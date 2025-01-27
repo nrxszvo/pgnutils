@@ -31,6 +31,8 @@ ABSL_FLAG(int, maxGamesPerElo, -1, "maximum number of games per ELO group (-1 to
 ABSL_FLAG(int, nThreadsPerBlock, 1, "number of threads per block");
 ABSL_FLAG(int, maxGamesLeniency, 100, "allow maxGamesPerElo to be exceeded by approx. this number in order to greatly speed up parallel processing");
 
+typedef std::map<int16_t, std::map<int16_t, int64_t>> tcHistType;
+
 class RandDS {
 	std::random_device rd;
 	std::mt19937 e2;
@@ -91,7 +93,7 @@ public:
 	void insertCoords(int threadId, int64_t blockId, std::shared_ptr<GameMD> md, int64_t gameLength){
 		maxElo = std::max(maxElo, std::max(md->welo, md->belo));
 		int dsIdx = rds.get();
-		int64_t buf[] = {md->gameIdx, md->gameStart, gameLength, md->timeCtl, md->inc, blockId};
+		int64_t buf[] = {md->gameIdx, md->gameStart, gameLength, blockId};
 		splits[threadId][dsIdx].idxData.write(reinterpret_cast<char*>(buf), sizeof(buf));
 		splits[threadId][dsIdx].nGames++;
 	};
@@ -109,11 +111,19 @@ public:
 	int16_t getMaxElo() {
 		return maxElo;
 	}
-	void finalizeData(std::vector<std::string>& blockDirs) {
+	void finalizeData(std::vector<std::string>& blockDirs, tcHistType& tcHist) {
 		json md;
 		md["ngames"] = getNGames();
 		md["min_moves"] = minMoves;
 		md["block_dirs"] = blockDirs;	
+		md["tc_histo"] = json::object_t();
+		for (auto kv: tcHist) {
+			std::string tc = std::to_string(kv.first);
+			md["tc_histo"][tc] = json::object_t();
+			for (auto incn: kv.second) {
+				md["tc_histo"][tc][std::to_string(incn.first)] = incn.second;
+			}
+		}
 		std::cout << std::endl << "Consolidating output data..." << std::endl;
 		for (int i=0; i<splits[0].size(); i++) {
 			int64_t nGames = 0;
@@ -128,7 +138,7 @@ public:
 				fs::remove(split.fp);
 			}
 			consOf.close();
-			md[names[i] + "_shape"] = {nGames,6};
+			md[names[i] + "_shape"] = {nGames,4};
 			md[names[i] + "_n"] = nGames;
 		}
 		std::ofstream mdfile(outdir + "/fmd.json");
@@ -136,7 +146,7 @@ public:
 	}
 };
 
-void printReport(int64_t nInc, int64_t nTotal, std::vector<int>& eloEdges, std::vector<std::vector<int>> &eloHist, std::map<std::string, int64_t>& tcHist, int16_t maxElo) {
+void printReport(int64_t nInc, int64_t nTotal, std::vector<int>& eloEdges, std::vector<std::vector<int>> &eloHist, tcHistType& tcHist, int16_t maxElo) {
 	std::cout << "Included " << nInc << " out of " << nTotal << " games" << std::endl;
 	std::cout << "Elo 2d Histogram:" << std::endl;
 	eloEdges[eloEdges.size()-1] = maxElo;
@@ -153,7 +163,12 @@ void printReport(int64_t nInc, int64_t nTotal, std::vector<int>& eloEdges, std::
 	}
 	std::cout << std::endl << std::endl;
 	std::cout << "Time Control Histogram:" << std::endl;
-	for (auto kv: tcHist) std::cout << std::setfill(' ') << std::setw(11) << kv.first << std::setfill(' ') << std::setw(11) << kv.second << std::endl;
+	for (auto tcinc: tcHist) {
+		std::cout << std::setfill(' ') << std::setw(11) << tcinc.first << std::endl;
+   		for (auto incv: tcinc.second) {
+			std::cout << std::setw(16) << incv.first << std::setw(11) << incv.second << std::endl;
+		}
+	}
 	std::cout << std::endl;
 }
 
@@ -166,7 +181,6 @@ auto getEloBin(int elo, std::vector<int>& eloEdges) {
 	return -1;
 };
 
-
 class BlockProcessor {
 	int minMoves;
 	int minTime;
@@ -174,7 +188,7 @@ class BlockProcessor {
 	int leniency;
 	std::vector<int> eloEdges;
 	std::vector<std::vector<int>> eloHist;
-	std::map<std::string,int64_t> tcHist;
+	tcHistType tcHist;
 	std::shared_ptr<SplitManager> splitMgr;
 	std::mutex histoMtx;
 	std::vector<int64_t> blockGames;
@@ -226,17 +240,10 @@ public:
 		}
 	}
 
-	std::string getTcId(int16_t tc, int16_t inc) {
-		if (inc == 0) return std::to_string(tc);
-		else {
-			return std::to_string(tc) + "+n";
-		}
-	}
-
 	void processBlock(int blockId, int threadId) {
 		std::vector<int16_t> clk;
 		auto localEloHist = std::vector(eloEdges.size(), std::vector(eloEdges.size(), 0));
-		std::map<std::string, int64_t> localTCHist;
+		tcHistType localTCHist;
 		auto mrd = readers[threadId];
 		while (true) {
 			std::shared_ptr<GameMD> md = mrd->nextGame(clk);
@@ -248,7 +255,9 @@ public:
 					}
 				}
 				for (auto tc: localTCHist) {
-					tcHist[tc.first] += tc.second;
+					for (auto inc: tc.second) {
+						tcHist[tc.first][inc.first] += inc.second;
+					}
 				}
 				break;
 			}
@@ -264,7 +273,7 @@ public:
 
 			if (idx >= minMoves) {
 				localEloHist[wbin][bbin]++;
-				localTCHist[getTcId(md->timeCtl, md->inc)]++;
+				localTCHist[md->timeCtl][md->inc]++;
 				if (maxGames > 0 && blockGames[threadId] % leniency == 0) {
 					std::lock_guard<std::mutex> lock(histoMtx);
 					for (int i=0; i<eloHist.size(); i++) {
@@ -274,7 +283,9 @@ public:
 						}
 					}
 					for (auto tc: localTCHist) {
-						tcHist[tc.first] += tc.second;
+						for (auto inc: tc.second) {
+							tcHist[tc.first][inc.first] += inc.second;
+						}
 					}
 				}
 				splitMgr->insertCoords(threadId, blockId, md, idx+1);
@@ -388,7 +399,7 @@ void filterData(FDArgs& args) {
 	} else {
 		runMultiThreaded(blkProc, args);
 	}
-	splitMgr->finalizeData(args.npydirs);
+	splitMgr->finalizeData(args.npydirs, blkProc->getTCHist());
 	printReport(splitMgr->getNGames(), blkProc->completedGames(), args.eloEdges, blkProc->getEloHist(), blkProc->getTCHist(), splitMgr->getMaxElo()); 
 
 	auto stop = hrc::now();	
@@ -414,7 +425,7 @@ std::vector<std::string> getBlockDirs(const std::string& npydir)
 		if (p.is_directory()) {
 			std::string dn = p.path().string();
 			if (re2::RE2::PartialMatch(dn, BLOCK_PAT, &blockId)) {
-				blockDns[blockId] = dn;
+				blockDns[blockId] = fs::absolute(dn);
 			}
 		}
 	}

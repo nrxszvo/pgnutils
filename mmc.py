@@ -162,17 +162,20 @@ class MimicChessModule(L.LightningModule):
     def forward(self, tokens):
         return self.model(tokens)
 
-    def _chomp_pred(self, pred):
+    def _chomp_pred(self, pred, tc_groups):
+        bs, seqlen, ntc, nelo = pred.shape
+        index = tc_groups[:, None, None, None].expand([bs, seqlen, 1, nelo])
+        pred = torch.gather(pred, 2, index).squeeze()
         pred = pred.permute(0, 2, 1)
         return pred[:, :, self.opening_moves - 1 :]
 
-    def _get_loss(self, logits, target):
-        logits = self._chomp_pred(logits)
+    def _get_loss(self, logits, target, tc_groups):
+        logits = self._chomp_pred(logits, tc_groups)
         return self.loss(logits, target, ignore_index=self.NOOP)
 
     def training_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        loss = self._get_loss(logits, batch["target"])
+        loss = self._get_loss(logits, batch["target"], batch["tc_groups"])
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
         cur_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
         self.log("lr", cur_lr, prog_bar=True, sync_dist=True)
@@ -180,7 +183,7 @@ class MimicChessModule(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        valid_loss = self._get_loss(logits, batch["target"])
+        valid_loss = self._get_loss(logits, batch["target"], batch["tc_groups"])
 
         if torch.isnan(valid_loss):
             raise Exception("Loss is NaN, training stopped.")
@@ -208,7 +211,7 @@ class MimicChessModule(L.LightningModule):
 
     def predict_step(self, batch, batch_idx):
         logits = self(batch["input"])
-        logits = self._chomp_pred(logits)
+        logits = self._chomp_pred(logits, batch["tc_groups"])
         probs = torch.softmax(logits, dim=1)
 
         sprobs, sgrps = torch.sort(probs, dim=1, descending=True)

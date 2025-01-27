@@ -1,5 +1,11 @@
-datadir: testdata
+datadir: pgn/output/filtered
 elo_edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
+tc_groups: 
+ 180: [0,1000]
+ 300: [0,1000]
+ 600: [0,1000]
+ 1800: [1000]
+ 10800: [1000]
 model_args:
   dim: 64 
   n_layers: 16 

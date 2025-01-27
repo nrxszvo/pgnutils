@@ -5,6 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 import lightning as L
 import json
 from pgn import NOOP
+from collections import OrderedDict
 
 
 def init_worker(seed):
@@ -22,18 +23,20 @@ def collate_fn(batch):
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
     targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
-
+    tc_groups = torch.full((bs,), NOOP, dtype=torch.int64)
     for i, d in enumerate(batch):
         inp = d["input"]
         tgt = d["target"]
         inputs[i, : inp.shape[0]] = torch.from_numpy(inp)
         targets[i, : tgt.shape[0]] = torch.from_numpy(tgt)
         openings[i] = torch.from_numpy(d["opening"])
+        tc_groups[i] = d["tc_id"]
 
     return {
         "input": inputs,
         "target": targets,
         "opening": openings,
+        "tc_groups": tc_groups,
     }
 
 
@@ -99,6 +102,7 @@ class MMCDataset(Dataset):
         indices,
         blocks,
         elo_edges,
+        tc_groups,
         max_nsamp=None,
     ):
         super().__init__()
@@ -111,9 +115,17 @@ class MMCDataset(Dataset):
 
         self.blocks = blocks
         self.elo_edges = elo_edges
+        self.tc_groups = tc_groups
 
     def __len__(self):
         return self.nsamp
+
+    def _get_tc_id(self, tc, inc):
+        for tcgrp, incgrps in self.tc_groups.items():
+            if tc <= tcgrp:
+                for incgrp, tcid in incgrps.items():
+                    if inc <= incgrp:
+                        return tcid
 
     def _get_group(self, elo):
         for i, edge in enumerate(self.elo_edges):
@@ -126,6 +138,8 @@ class MMCDataset(Dataset):
         mvids = self.blocks[blk]["mvids"]
         welo = self.blocks[blk]["welos"][gidx]
         belo = self.blocks[blk]["belos"][gidx]
+        timectl = self.blocks[blk]["timectl"][gidx]
+        inc = self.blocks[blk]["increment"][gidx]
 
         n_inp = min(self.seq_len, nmoves)
         inp = np.empty(n_inp, dtype="int32")
@@ -138,11 +152,14 @@ class MMCDataset(Dataset):
         tgt[::2] = self._get_group(welo)
         tgt[1::2] = self._get_group(belo)
 
+        tc_id = self._get_tc_id(timectl, inc)
+
         return {
             "input": inp,
             "target": tgt,
             "opening": opening,
             "n_inp": n_inp,
+            "tc_id": tc_id,
         }
 
 
@@ -169,6 +186,9 @@ class MMCCheatingDataset(Dataset):
 
     def __len__(self):
         return self.nsamp
+
+    def _get_tc_id(self, tc, inc):
+        pass
 
     def _get_group(self, elo):
         for i, edge in enumerate(self.elo_edges):
@@ -259,6 +279,12 @@ def load_data(dirname, load_cheatdata=False):
                     dtype="int16",
                     shape=md["nmoves"],
                 ),
+                "timectl": np.memmap(
+                    os.path.join(dn, "timeCtl.npy"), mode="r", dtype="int16"
+                ),
+                "increment": np.memmap(
+                    os.path.join(dn, "inc.npy"), mode="r", dtype="int16"
+                ),
             }
         )
     data["blocks"] = blocks
@@ -266,10 +292,42 @@ def load_data(dirname, load_cheatdata=False):
 
 
 class MMCDataModule(L.LightningDataModule):
+    def _validate_tc_groups(self):
+        tc_histo = {
+            int(tc): {int(inc): n for inc, n in incs.items()}
+            for tc, incs in self.fmd["tc_histo"].items()
+        }
+        for tc, incs in tc_histo.items():
+            for tcg, incgs in self.tc_groups.items():
+                if tc <= tcg:
+                    for inc in incs:
+                        for incg in incgs:
+                            if inc <= incg:
+                                break
+                        else:
+                            raise Exception(
+                                f"increment {inc} for tc group {tcg} is greater than largest inc group"
+                            )
+                    break
+            else:
+                raise Exception(f"time control {tc} is greater than largest tc group")
+
+    def _init_tc_groups(self, tc_groups):
+        self.tc_groups = OrderedDict()
+        tcid = 0
+        for tcg, incgs in sorted(tc_groups.items()):
+            self.tc_groups[tcg] = OrderedDict()
+            for inc in sorted(incgs):
+                self.tc_groups[tcg][inc] = tcid
+                tcid += 1
+        self.n_tc_groups = tcid
+        self._validate_tc_groups()
+
     def __init__(
         self,
         datadir,
         elo_edges,
+        tc_groups,
         max_seq_len,
         batch_size,
         num_workers,
@@ -283,8 +341,10 @@ class MMCDataModule(L.LightningDataModule):
         self.elo_edges = elo_edges
         if len(self.elo_edges) == 0 or self.elo_edges[-1] < float("inf"):
             self.elo_edges.append(float("inf"))
+
         self.load_cheatdata = load_cheatdata
         self.__dict__.update(load_data(datadir, load_cheatdata))
+        self._init_tc_groups(tc_groups)
         # min_moves is the minimum game length that can be included in the dataset
         # we subtract one here so that it now represents the minimum number of moves that the
         # model must see before making its first prediction
@@ -299,6 +359,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.train,
                 self.blocks,
                 self.elo_edges,
+                self.tc_groups,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
@@ -306,6 +367,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.val,
                 self.blocks,
                 self.elo_edges,
+                self.tc_groups,
             )
         if stage == "validate":
             self.valset = MMCDataset(
@@ -314,6 +376,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.val,
                 self.blocks,
                 self.elo_edges,
+                self.tc_groups,
             )
 
         if stage in ["test", "predict"]:
@@ -334,6 +397,7 @@ class MMCDataModule(L.LightningDataModule):
                     self.test,
                     self.blocks,
                     self.elo_edges,
+                    self.tc_groups,
                     self.max_testsamp,
                 )
 

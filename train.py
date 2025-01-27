@@ -73,39 +73,37 @@ def main():
     model_args = ModelArgs(cfgyml.model_args)
     model_args.n_elo_groups = len(cfgyml.elo_edges) + 1
 
-    def train_model(name, datadir, savepath):
-        dm = MMCDataModule(
-            datadir,
-            cfgyml.elo_edges,
-            model_args.max_seq_len,
-            cfgyml.batch_size,
-            n_workers,
-        )
-        module_args = MMCModuleArgs(
-            name,
-            os.path.join(savepath, "ckpt"),
-            model_args,
-            dm.opening_moves,
-            NOOP,
-            cfgyml.lr_scheduler_params,
-            cfgyml.max_steps,
-            cfgyml.val_check_steps,
-            cfgyml.random_seed,
-            cfgyml.strategy,
-            devices,
-        )
+    dm = MMCDataModule(
+        cfgyml.datadir,
+        cfgyml.elo_edges,
+        cfgyml.tc_groups,
+        model_args.max_seq_len,
+        cfgyml.batch_size,
+        n_workers,
+    )
+    model_args.n_timecontrol_heads = dm.n_tc_groups
+    module_args = MMCModuleArgs(
+        args.name,
+        os.path.join(save_path, "ckpt"),
+        model_args,
+        dm.opening_moves,
+        NOOP,
+        cfgyml.lr_scheduler_params,
+        cfgyml.max_steps,
+        cfgyml.val_check_steps,
+        cfgyml.random_seed,
+        cfgyml.strategy,
+        devices,
+    )
 
-        mmc = MimicChessModule(module_args)
+    mmc = MimicChessModule(module_args)
 
-        nweights, nflpweights = mmc.num_params()
-        est_tflops = 6 * nflpweights * cfgyml.batch_size * model_args.max_seq_len / 1e12
-        print(f"# model params: {nweights:.2e}")
-        print(f"estimated TFLOPs: {est_tflops:.1f}")
+    nweights, nflpweights = mmc.num_params()
+    est_tflops = 6 * nflpweights * cfgyml.batch_size * model_args.max_seq_len / 1e12
+    print(f"# model params: {nweights:.2e}")
+    print(f"estimated TFLOPs: {est_tflops:.1f}")
 
-        mmc.fit(dm, ckpt=args.ckpt)
-
-    datadir = cfgyml.datadir
-    train_model(args.name, datadir, save_path)
+    mmc.fit(dm, ckpt=args.ckpt)
 
 
 if __name__ == "__main__":
