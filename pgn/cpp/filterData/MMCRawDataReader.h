@@ -1,7 +1,7 @@
 #include <vector>
 #include <string>
 #include <fstream>
-#include <vector>
+#include <memory>
 
 struct GameMD {
 	int64_t gameIdx;

@@ -52,9 +52,11 @@ class MimicChessModule(L.LightningModule):
         val_check_interval = min(params.val_check_steps, params.max_steps)
         self.lr_scheduler_params = params.lr_scheduler_params
         if torch.cuda.is_available():
-            precision = "bf16-mixed" if torch.cuda.is_bf16_supported() else 16
+            precision = "transformer-engine" if torch.cuda.is_bf16_supported() else 16
+            accelerator = "gpu"
         else:
             precision = 32
+            accelerator = "cpu"
 
         self.trainer_kwargs = {
             "logger": logger,
@@ -64,22 +66,20 @@ class MimicChessModule(L.LightningModule):
             "strategy": params.strategy,
             "devices": params.devices,
             "precision": precision,
-            "accelerator": "gpu" if torch.cuda.is_available() else "cpu",
+            "accelerator": accelerator,
+            "callbacks": [TQDMProgressBar()],
         }
-        self.callbacks = [
-            TQDMProgressBar(),
-        ]
         if params.outdir is not None:
-            self.callbacks.append(
+            self.trainer_kwargs["callbacks"].append(
                 ModelCheckpoint(
                     dirpath=params.outdir,
-                    filename=params.name + "-{train_loss:.2f}",
-                    every_n_train_steps=val_check_interval,
+                    filename=params.name + "-{valid_loss:.2f}",
+                    monitor="valid_loss",
                 )
             )
 
         self._init_model()
-        self.trainer = L.Trainer(callbacks=self.callbacks, **self.trainer_kwargs)
+        self.trainer = L.Trainer(**self.trainer_kwargs)
 
     def _init_model(self):
         if self.model is not None:
