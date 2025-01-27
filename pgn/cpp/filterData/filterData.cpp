@@ -1,6 +1,5 @@
 #include "MMCRawDataReader.h"
 #include "utils/utils.h"
-#include "npy.hpp"
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
 #include "absl/flags/usage.h"
@@ -12,11 +11,10 @@
 #include <iomanip>
 #include <random>
 #include <filesystem>
-#include <tuple>
 #include <re2/re2.h>
 #include <mutex>
 #include <thread>
-#include <unordered_map>
+#include <map>
 
 using json = nlohmann::json;
 using namespace std::chrono_literals;
@@ -89,17 +87,15 @@ public:
 			}
 		}
 	}
-	void insertCoords(int threadId, int64_t gIdx, int64_t gStart, int64_t gLength, int64_t timeCtl, int64_t blockId, int16_t welo, int16_t belo){
-		maxElo = std::max(maxElo, std::max(welo, belo));
+
+	void insertCoords(int threadId, int64_t blockId, std::shared_ptr<GameMD> md, int64_t gameLength){
+		maxElo = std::max(maxElo, std::max(md->welo, md->belo));
 		int dsIdx = rds.get();
-		
-		splits[threadId][dsIdx].idxData.write((char*)&gIdx, sizeof(int64_t));
-		splits[threadId][dsIdx].idxData.write((char*)&gStart, sizeof(int64_t));
-		splits[threadId][dsIdx].idxData.write((char*)&gLength, sizeof(int64_t));
-		splits[threadId][dsIdx].idxData.write((char*)&timeCtl, sizeof(int64_t));
-		splits[threadId][dsIdx].idxData.write((char*)&blockId, sizeof(int64_t));
+		int64_t buf[] = {md->gameIdx, md->gameStart, gameLength, md->timeCtl, md->inc, blockId};
+		splits[threadId][dsIdx].idxData.write(reinterpret_cast<char*>(buf), sizeof(buf));
 		splits[threadId][dsIdx].nGames++;
 	};
+
 	int64_t getNGames() {
 		int64_t nGames = 0;
 		for (auto& ttv: splits) {
@@ -109,6 +105,7 @@ public:
 		}
 		return nGames;
 	}
+
 	int16_t getMaxElo() {
 		return maxElo;
 	}
@@ -131,7 +128,7 @@ public:
 				fs::remove(split.fp);
 			}
 			consOf.close();
-			md[names[i] + "_shape"] = {nGames,5};
+			md[names[i] + "_shape"] = {nGames,6};
 			md[names[i] + "_n"] = nGames;
 		}
 		std::ofstream mdfile(outdir + "/fmd.json");
@@ -139,7 +136,7 @@ public:
 	}
 };
 
-void printReport(int64_t nInc, int64_t nTotal, std::vector<int>& eloEdges, std::vector<std::vector<int>> &eloHist, std::unordered_map<int16_t, int64_t>& tcHist, int16_t maxElo) {
+void printReport(int64_t nInc, int64_t nTotal, std::vector<int>& eloEdges, std::vector<std::vector<int>> &eloHist, std::map<std::string, int64_t>& tcHist, int16_t maxElo) {
 	std::cout << "Included " << nInc << " out of " << nTotal << " games" << std::endl;
 	std::cout << "Elo 2d Histogram:" << std::endl;
 	eloEdges[eloEdges.size()-1] = maxElo;
@@ -154,10 +151,9 @@ void printReport(int64_t nInc, int64_t nTotal, std::vector<int>& eloEdges, std::
 	for (auto e: eloEdges) {
 		std::cout << std::setfill(' ') << std::setw(11) << e;
 	}
-	std::cout << std::endl;
+	std::cout << std::endl << std::endl;
 	std::cout << "Time Control Histogram:" << std::endl;
-	for (auto kv: tcHist) std::cout << std::setfill(' ') << std::setw(11) << kv.first;
-	for (auto kv: tcHist) std::cout << std::setfill(' ') << std::setw(11) << kv.second;
+	for (auto kv: tcHist) std::cout << std::setfill(' ') << std::setw(11) << kv.first << std::setfill(' ') << std::setw(11) << kv.second << std::endl;
 	std::cout << std::endl;
 }
 
@@ -178,7 +174,7 @@ class BlockProcessor {
 	int leniency;
 	std::vector<int> eloEdges;
 	std::vector<std::vector<int>> eloHist;
-	std::unordered_map<int16_t,int64_t> tcHist;
+	std::map<std::string,int64_t> tcHist;
 	std::shared_ptr<SplitManager> splitMgr;
 	std::mutex histoMtx;
 	std::vector<int64_t> blockGames;
@@ -230,14 +226,21 @@ public:
 		}
 	}
 
+	std::string getTcId(int16_t tc, int16_t inc) {
+		if (inc == 0) return std::to_string(tc);
+		else {
+			return std::to_string(tc) + "+n";
+		}
+	}
+
 	void processBlock(int blockId, int threadId) {
 		std::vector<int16_t> clk;
 		auto localEloHist = std::vector(eloEdges.size(), std::vector(eloEdges.size(), 0));
-		std::unordered_map<int16_t, int64_t> localTCHist;
+		std::map<std::string, int64_t> localTCHist;
 		auto mrd = readers[threadId];
 		while (true) {
-			auto [bytesRead, gIdx, gameStart, whiteElo, blackElo] = mrd->nextGame(clk);
-			if (bytesRead == 0) { 
+			std::shared_ptr<GameMD> md = mrd->nextGame(clk);
+			if (md == nullptr) { 
 				std::lock_guard<std::mutex> lock(histoMtx);
 				for (int i=0; i<eloHist.size(); i++) {
 					for (int j=0; j<eloHist.size(); j++) {
@@ -252,8 +255,8 @@ public:
 
 			blockGames[threadId]++;
 
-			int wbin = getEloBin(whiteElo, eloEdges);
-			int bbin = getEloBin(blackElo, eloEdges);
+			int wbin = getEloBin(md->welo, eloEdges);
+			int bbin = getEloBin(md->belo, eloEdges);
 			if (maxGames > 0 && eloHist[wbin][bbin] >= maxGames) continue;
 
 			int idx = clk.size()-1;	
@@ -261,7 +264,7 @@ public:
 
 			if (idx >= minMoves) {
 				localEloHist[wbin][bbin]++;
-				localTCHist[clk[0]]++;
+				localTCHist[getTcId(md->timeCtl, md->inc)]++;
 				if (maxGames > 0 && blockGames[threadId] % leniency == 0) {
 					std::lock_guard<std::mutex> lock(histoMtx);
 					for (int i=0; i<eloHist.size(); i++) {
@@ -274,7 +277,7 @@ public:
 						tcHist[tc.first] += tc.second;
 					}
 				}
-				splitMgr->insertCoords(threadId, gIdx, gameStart, idx+1, clk[0], blockId, whiteElo, blackElo);
+				splitMgr->insertCoords(threadId, blockId, md, idx+1);
 			}
 		}
 	}

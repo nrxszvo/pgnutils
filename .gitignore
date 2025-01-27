@@ -10,3 +10,5 @@ release/
 *.npy
 L/
 .clangd
+processZst
+resizeMMap
