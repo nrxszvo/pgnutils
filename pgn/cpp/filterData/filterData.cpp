@@ -322,7 +322,7 @@ std::shared_ptr<SplitManager> initSplitManager(FDArgs &args) {
 	SplitManager::Args smArgs;
 	smArgs.outdir = args.outdir;
 	smArgs.nThreads = args.npydirs.size()*args.nThreadsPerBlock;
-	smArgs.names = {"train", "val", "test"};
+	smArgs.names = {"train", "test", "val"};
 	smArgs.trainp = args.trainp;
 	smArgs.testp = args.testp;
 	smArgs.minMoves = args.minMoves;
