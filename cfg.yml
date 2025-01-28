@@ -20,9 +20,9 @@ model_args:
 lr_scheduler_params:
   lr: 5.e-5
   name: "WarmUpCosine"
-  min_lr: 1.e-7
+  min_lr: 5.e-7
   warmup_steps: 25000 
-batch_size: 256 
+batch_size: 384
 max_steps: 4.e+5 
 val_check_steps: 25000
 strategy: ddp 

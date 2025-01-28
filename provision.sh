@@ -21,6 +21,8 @@ fi
 conda update -y conda
 conda init
 
+alias clear=/usr/bin/clear
+
 if [ ! -d "${HOME}/git" ]; then
 	mkdir ${HOME}/git
 fi
