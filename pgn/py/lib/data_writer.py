@@ -1,21 +1,47 @@
 import os
 import numpy as np
+from time import gmtime, strftime
 
-from . import timeit
+
+def now():
+    return strftime("%Y-%m-%d %H:%M:%S", gmtime())
 
 
 class DataWriter:
-    def __init__(self, outdir, alloc_games, alloc_moves):
-        def get_fn(name):
-            return os.path.join(outdir, name)
+    def _get_last_block(self):
+        block = 0
+        dn = os.path.join(self.outdir, f"block-{block}")
+        if not os.path.exists(dn):
+            return block
 
-        self.processfn = get_fn("processed.txt")
+        while os.path.exists(dn):
+            block += 1
+            dn = os.path.join(self.outdir, f"block-{block}")
+
+        dn = os.path.join(self.outdir, f"block-{block - 1}")
+        if os.path.exists(dn):
+            md = np.load(os.path.join(dn, "md.npy"), allow_pickle=True).item()
+            if (md["games_alloc"] - md["ngames"]) > 0 and (
+                md["moves_alloc"] - md["nmoves"]
+            ) > 0:
+                return block - 1
+        return block
+
+    def _init_block(self, block, exist_ok=True):
+        dn = os.path.join(self.outdir, f"block-{block}")
+        os.makedirs(dn, exist_ok=exist_ok)
+
+        def get_fn(name):
+            return os.path.join(dn, name)
+
         self.mdfile = get_fn("md.npy")
         self.welofile = get_fn("welos.npy")
         self.belofile = get_fn("belos.npy")
         self.gsfile = get_fn("gamestarts.npy")
         self.mvidfile = get_fn("mvids.npy")
         self.clkfile = get_fn("clk.npy")
+        self.timefile = get_fn("timeCtl.npy")
+        self.incfile = get_fn("inc.npy")
 
         exists = os.path.exists(self.mdfile)
         if exists:
@@ -24,11 +50,14 @@ class DataWriter:
             alloc_moves = self.md["moves_alloc"]
             mode = "r+"
         else:
+            alloc_games = self.alloc_games
+            alloc_moves = self.alloc_moves
             assert not os.path.exists(self.welofile)
             assert not os.path.exists(self.belofile)
             assert not os.path.exists(self.gsfile)
             assert not os.path.exists(self.mvidfile)
             assert not os.path.exists(self.clkfile)
+            assert not os.path.exists(self.timefile)
             mode = "w+"
 
         self.all_welos = np.memmap(
@@ -46,19 +75,13 @@ class DataWriter:
         self.all_clk = np.memmap(
             self.clkfile, mode=mode, dtype="int16", shape=alloc_moves
         )
+        self.all_time = np.memmap(
+            self.timefile, mode=mode, dtype="int16", shape=alloc_games
+        )
+        self.all_inc = np.memmap(
+            self.incfile, mode=mode, dtype="int16", shape=alloc_games
+        )
         if not exists:
-            print("allocating outputs...")
-
-            def allocate():
-                self.all_welos[:] = 0
-                self.all_belos[:] = 0
-                self.all_gamestarts[:] = 0
-                self.all_mvids[:] = 0
-                self.all_clk[:] = 0
-
-            _, timestr = timeit(allocate)
-            print(f"memory allocation took {timestr}")
-
             self.md = {
                 "archives": [],
                 "ngames": 0,
@@ -67,24 +90,42 @@ class DataWriter:
                 "moves_alloc": alloc_moves,
             }
             np.save(self.mdfile, self.md, allow_pickle=True)
+        return block
+
+    def __init__(self, outdir, alloc_games, alloc_moves):
+        self.outdir = outdir
+        self.alloc_games = alloc_games
+        self.alloc_moves = alloc_moves
+        self.block = self._get_last_block()
+        self._init_block(self.block)
+        self.processfn = os.path.join(outdir, "processed.txt")
+
+    def _flush_all(self):
+        try:
+            self.all_welos.flush()
+            self.all_belos.flush()
+            self.all_gamestarts.flush()
+            self.all_mvids.flush()
+            self.all_clk.flush()
+            self.all_time.flush()
+            self.all_inc.flush()
+        except Exception as e:
+            print(f"Warning: attempting to flush memmaps raised exception: {e}")
 
     def __del__(self):
-        self.all_welos.flush()
-        self.all_belos.flush()
-        self.all_gamestarts.flush()
-        self.all_mvids.flush()
-        self.all_clk.flush()
+        self._flush_all()
 
     def write_npys(self, tmpdir, npyname):
         success = False
         nmoves = 0
         try:
             with open(self.processfn, "a") as f:
-                f.write(f"{npyname},")
+                f.write(f"[{now()}],{npyname},")
 
             elos = np.load(f"{tmpdir}/elos.npy")
             gamestarts = np.load(f"{tmpdir}/gamestarts.npy")
             moves = np.load(f"{tmpdir}/moves.npy")
+            timeData = np.load(f"{tmpdir}/timeData.npy")
             ngames = gamestarts.shape[0]
             nmoves = moves.shape[1]
 
@@ -97,54 +138,33 @@ class DataWriter:
                 ms = self.md["nmoves"]
                 me = ms + nmoves
 
-                def realloc(mmap, fn, dtype, cursize, shape):
-                    newmap = np.memmap(".tmpmap", mode="w+", dtype=dtype, shape=shape)
-                    newmap[:cursize] = mmap[:]
-                    newmap[cursize:] = 0
-                    newmap.flush()
-                    os.remove(fn)
-                    os.rename(".tmpmap", fn)
-                    return newmap
+                if ge > self.md["games_alloc"] or me > self.md["moves_alloc"]:
+                    print(f"initializing block {self.block + 1}")
+                    self._flush_all()
+                    self.block = self._init_block(self.block + 1)
+                    gs = 0
+                    ge = ngames
+                    ms = 0
+                    me = nmoves
 
-                cursize = self.md["games_alloc"]
-                if ge > cursize:
-                    newsize = int(1.1 * cursize)
-
-                    self.all_welos = realloc(
-                        self.all_welos, self.welofile, "int16", cursize, newsize
-                    )
-                    self.all_belos = realloc(
-                        self.all_belos, self.belofile, "int16", cursize, newsize
-                    )
-                    self.all_gamestarts = realloc(
-                        self.all_gamestarts, self.gsfile, "int64", cursize, newsize
-                    )
-                    self.md["games_alloc"] = newsize
-
-                cursize = self.md["moves_alloc"]
-                if me > cursize:
-                    newsize = int(1.1 * cursize)
-                    self.all_mvids = realloc(
-                        self.all_mvids, self.mvidfile, "int16", cursize, newsize
-                    )
-                    self.all_clk = realloc(
-                        self.all_clk, self.clkfile, "int16", cursize, newsize
-                    )
-                    self.md["moves_alloc"] = newsize
+                with open(self.processfn, "a") as f:
+                    f.write(f"b{self.block},")
 
                 self.all_welos[gs:ge] = elos[0, :]
                 self.all_belos[gs:ge] = elos[1, :]
-                for i in range(ngames):
-                    gamestarts[i] += self.md["nmoves"]
+                gamestarts += self.md["nmoves"]
                 self.all_gamestarts[gs:ge] = gamestarts[:]
                 self.all_mvids[ms:me] = moves[0, :]
                 self.all_clk[ms:me] = moves[1, :]
+                self.all_time[gs:ge] = timeData[0, :]
+                self.all_inc[gs:ge] = timeData[1, :]
 
                 self.md["archives"].append(
                     (npyname, self.md["ngames"], self.md["nmoves"])
                 )
                 self.md["ngames"] += ngames
                 self.md["nmoves"] += nmoves
+                print(f"saving md to {self.mdfile}")
                 np.save(self.mdfile, self.md, allow_pickle=True)
             success = True
         finally:

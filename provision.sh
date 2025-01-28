@@ -21,6 +21,8 @@ fi
 conda update -y conda
 conda init
 
+alias clear=/usr/bin/clear
+
 if [ ! -d "${HOME}/git" ]; then
 	mkdir ${HOME}/git
 fi
@@ -90,5 +92,5 @@ fi
 
 echo "set -g mouse on" > ${HOME}/.tmux.conf
 
-sudo apt-get install -y stockfish libzstd-dev
+sudo apt-get install -y stockfish libzstd-dev clangd
 

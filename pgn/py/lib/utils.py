@@ -1,6 +1,9 @@
 import time
 import datetime
 from multiprocessing import Lock
+import os
+import numpy as np
+import subprocess
 
 
 class PrintSafe:
@@ -38,3 +41,20 @@ def get_eta(max_items, items_so_far, start):
     seconds = eta.seconds % 60
     eta_str = f"{eta.days}:{hours:02}:{minutes:02}:{seconds:02}"
     return eta_str
+
+
+def resize_mmaps(binary, npydir):
+    blockDirs = [dn for dn in os.listdir(npydir) if "block-" in dn]
+    for dn in blockDirs:
+        print(f"resizing {dn}")
+        md = np.load(os.path.join(npydir, dn, "md.npy"), allow_pickle=True).item()
+        cmd = [
+            binary,
+            "--blockDir",
+            os.path.abspath(os.path.join(npydir, dn)),
+            "--ngames",
+            str(md["ngames"]),
+            "--nmoves",
+            str(md["nmoves"]),
+        ]
+        subprocess.call(cmd)

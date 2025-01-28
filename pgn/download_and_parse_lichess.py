@@ -9,7 +9,7 @@ import time
 import wget
 from multiprocessing import Queue, Process
 
-from py.lib import timeit, DataWriter, PrintSafe
+from py.lib import timeit, DataWriter, PrintSafe, resize_mmaps
 
 
 def collect_existing_npy(npy_dir):
@@ -18,9 +18,11 @@ def collect_existing_npy(npy_dir):
     if os.path.exists(procfn):
         with open(procfn) as f:
             for line in f:
-                vs = line.rstrip().split(",")
-                if vs[-1] != "failed":
-                    existing.append(vs[0])
+                timestamp, name, ngames, nmoves, block, status = line.rstrip().split(
+                    ","
+                )
+                if status != "failed":
+                    existing.append(name)
     return existing
 
 
@@ -87,6 +89,8 @@ def main(
     allow_no_clock,
     alloc_games,
     alloc_moves,
+    minSec,
+    resize_bin,
 ):
     to_proc = collect_remaining(list_fn, npy_dir)
     if len(to_proc) == 0:
@@ -119,7 +123,7 @@ def main(
                 tmpdir = tempfile.TemporaryDirectory()
                 print_safe(f"{npyname}: processing zst into {tmpdir.name}...")
                 cmd = [
-                    "./" + parser_bin,
+                    parser_bin,
                     "--zst",
                     zst_fn,
                     "--name",
@@ -130,6 +134,8 @@ def main(
                     str(n_reader_proc),
                     "--nMoveProcessors",
                     str(n_move_proc),
+                    "--minSec",
+                    str(minSec),
                 ]
                 if allow_no_clock:
                     cmd.append("--allowNoClock")
@@ -175,6 +181,7 @@ def main(
                                 "Last archive contained no moves, 'terminate' signaled"
                             )
                         active_procs.remove(procdata)
+                        break
 
             if terminate and len(active_procs) == 0:
                 break
@@ -196,6 +203,7 @@ def main(
         for fn in os.listdir("."):
             if re.match(r"lichess_db_standard_rated.*\.zst.*\.tmp", fn):
                 os.remove(fn)
+        resize_mmaps(resize_bin, npy_dir)
 
 
 if __name__ == "__main__":
@@ -203,14 +211,16 @@ if __name__ == "__main__":
 
     multiprocessing.set_start_method("spawn")
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument(
         "--list",
         default="list.txt",
         help="txt file containing list of pgn zips to download and parse",
     )
     parser.add_argument("--npy", default="npy_w_clk", help="folder to save npy files")
-    parser.add_argument("--parser", default="processZst", help="parser binary")
+    parser.add_argument("--parser", default="./processZst", help="parser binary")
     parser.add_argument(
         "--n_dl_procs",
         default=2,
@@ -244,20 +254,33 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--alloc_games",
-        default=1024**3,
-        help="initial memory allocation for game-level data (elos, gamestarts)",
-        type=int,
+        default=1,
+        help="initial memory allocation for game-level data (elos, gamestarts) in billions of games",
+        type=float,
     )
     parser.add_argument(
         "--alloc_moves",
-        default=50 * 1024**3,
-        help="initial memory allocation for move data (mvids, clk times)",
+        default=50,
+        help="initial memory allocation for move data (mvids, clk times) in billions of moves",
+        type=float,
+    )
+    parser.add_argument(
+        "--min_seconds",
+        default=180,
+        help="minimum time control for games in seconds",
         type=int,
     )
+    parser.add_argument(
+        "--resize_bin",
+        default="./resizeMMap",
+        help="binary for resizing memmaps after all data has been processed",
+    )
     args = parser.parse_args()
-    if args.alloc_moves > 1024**3:
+    alloc_games = int(1e9 * args.alloc_games)
+    alloc_moves = int(1e9 * args.alloc_moves)
+    if alloc_moves >= 5e10:
         print(
-            f"WARNING: allocating {4*args.alloc_moves/1024**3:.2f} GB of output.  Continue?"
+            f"WARNING: allocating {4 * alloc_moves / 1024**3:.2f} GB of output.  Continue?"
         )
         resp = input("Y|n")
         if resp == "n":
@@ -272,6 +295,8 @@ if __name__ == "__main__":
         args.n_reader_procs,
         args.n_move_procs,
         args.allow_no_clock,
-        args.alloc_games,
-        args.alloc_moves,
+        alloc_games,
+        alloc_moves,
+        args.min_seconds,
+        args.resize_bin,
     )

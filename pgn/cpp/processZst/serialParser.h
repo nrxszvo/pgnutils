@@ -1,4 +1,4 @@
 #include "parser.h"
 #include <string>
 
-ParserOutput processSerial(std::string zst);
+std::shared_ptr<ParserOutput> processSerial(std::string zst);
