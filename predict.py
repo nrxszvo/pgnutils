@@ -48,11 +48,13 @@ def predict(cfgyml, datadir, cp, n_workers, n_samp):
     dm = MMCDataModule(
         datadir=datadir,
         elo_edges=cfgyml.elo_edges,
+        tc_groups=cfgyml.tc_groups,
         max_seq_len=model_args.max_seq_len,
         batch_size=cfgyml.batch_size,
         num_workers=n_workers,
         max_testsamp=n_samp,
     )
+    model_args.n_timecontrol_heads = dm.n_tc_groups
     module_args = MMCModuleArgs(
         name=os.path.splitext(os.path.basename(cp))[0],
         outdir=None,

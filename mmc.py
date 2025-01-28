@@ -52,7 +52,7 @@ class MimicChessModule(L.LightningModule):
         val_check_interval = min(params.val_check_steps, params.max_steps)
         self.lr_scheduler_params = params.lr_scheduler_params
         if torch.cuda.is_available():
-            precision = "transformer-engine" if torch.cuda.is_bf16_supported() else 16
+            precision = "bf16-mixed" if torch.cuda.is_bf16_supported() else 16
             accelerator = "gpu"
         else:
             precision = 32
@@ -248,6 +248,6 @@ class MimicChessModule(L.LightningModule):
 
     def predict(self, datamodule):
         tkargs = self.trainer_kwargs
-        trainer = L.Trainer(callbacks=[TQDMProgressBar()], **tkargs)
+        trainer = L.Trainer(**tkargs)
         outputs = trainer.predict(self, datamodule)
         return outputs
