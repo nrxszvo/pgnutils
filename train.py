@@ -13,9 +13,7 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
-from mmc import MimicChessModule, MMCModuleArgs
-from mmcdataset import MMCDataModule, NOOP
-from model import ModelArgs
+from utils import init_modules
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", default="cfg.yml", help="yaml config file")
@@ -65,46 +63,16 @@ def main():
 
     # torch_dist_init()
     devices = int(os.environ.get("WORLD_SIZE", 1))
-    n_workers = os.cpu_count() // devices if torch.cuda.is_available() else 0
 
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
 
-    model_args = ModelArgs(cfgyml.model_args)
-    if cfgyml.loss == "cross_entropy":
-        model_args.n_output_vars = len(cfgyml.elo_edges) + 1
-    elif cfgyml.loss == "gaussian_nll":
-        model_args.n_output_vars = 2
-    else:
-        raise Exception("did not recognize loss function name")
-
-    dm = MMCDataModule(
-        cfgyml.datadir,
-        cfgyml.elo_edges,
-        cfgyml.tc_groups,
-        model_args.max_seq_len,
-        cfgyml.batch_size,
-        n_workers,
-    )
-    model_args.n_timecontrol_heads = dm.n_tc_groups
-    module_args = MMCModuleArgs(
-        args.name,
-        os.path.join(save_path, "ckpt"),
-        model_args,
-        dm.opening_moves,
-        NOOP,
-        cfgyml.lr_scheduler_params,
-        cfgyml.max_steps,
-        cfgyml.val_check_steps,
-        cfgyml.random_seed,
-        cfgyml.strategy,
-        devices,
-    )
-
-    mmc = MimicChessModule(module_args)
+    mmc, dm = init_modules(cfgyml, cfgyml.strategy, devices)
 
     nweights, nflpweights = mmc.num_params()
-    est_tflops = 6 * nflpweights * cfgyml.batch_size * model_args.max_seq_len / 1e12
+    est_tflops = (
+        6 * nflpweights * cfgyml.batch_size * cfgyml.model_args.max_seq_len / 1e12
+    )
     print(f"# model params: {nweights:.2e}")
     print(f"estimated TFLOPs: {est_tflops:.1f}")
 

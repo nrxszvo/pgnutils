@@ -17,7 +17,8 @@ class ModelArgs:
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
     vocab_size: int = 2048
-    n_output_vars: int = 10
+    predict_move: bool = True
+    elo_pred_size: int = 10
     n_timecontrol_heads: int = 1
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
@@ -220,16 +221,60 @@ class Transformer(nn.Module):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.preproc = nn.Linear(
-            params.dim, params.n_timecontrol_heads * params.dim, bias=False
-        )
-        self.output = nn.Linear(params.dim, params.n_output_vars, bias=False)
+        if params.n_timecontrol_heads > 0:
+            self.preproc = nn.Linear(
+                params.dim, params.n_timecontrol_heads * params.dim, bias=False
+            )
+        if params.elo_pred_size > 0:
+            self.elo_output = nn.Linear(params.dim, params.elo_pred_size, bias=False)
+
+        if params.predict_move:
+            self.move_output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
             params.max_seq_len * 2,
             params.rope_theta,
         )
+
+    def _apply_timecontrol(self, h: torch.Tensor):
+        if self.params.n_timecontrol_heads > 0:
+            h = F.silu(self.preproc(h))
+            bs, seqlen, _ = h.shape
+            h = (
+                h.reshape(bs, seqlen, self.params.n_timecontrol_heads, self.params.dim)
+                .permute(0, 2, 1, 3)
+                .reshape(bs * self.params.n_timecontrol_heads, seqlen, self.params.dim)
+            )
+        return h
+
+    def _get_elo_pred(self, h: torch.Tensor):
+        if self.params.elo_pred_size == 0:
+            return None
+
+        bs, seqlen, _ = h.shape
+        h = self.elo_output(h).float()
+        h = (
+            h.reshape(
+                bs, self.params.n_timecontrol_heads, seqlen, self.params.elo_pred_size
+            )
+            .permute(0, 2, 1, 3)
+            .squeeze()
+        )
+        return h
+
+    def _get_move_pred(self, h: torch.Tensor):
+        if self.params.predict_move:
+            bs, seqlen, _ = h.shape
+            h = self.move_output(h).float()
+            h = (
+                h.reshape(bs, self.params.n_timecontrol_heads, seqlen)
+                .permute(0, 2, 1)
+                .squeeze()
+            )
+            return h
+        else:
+            return None
 
     def forward(self, tokens: torch.Tensor, start_pos: int = 0):
         _bsz, seqlen = tokens.shape
@@ -246,16 +291,6 @@ class Transformer(nn.Module):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        h = self.preproc(h)
-        h = F.silu(h)
-        bs, seqlen, _ = h.shape
-        h = (
-            h.reshape(bs, seqlen, self.params.n_timecontrol_heads, self.params.dim)
-            .permute(0, 2, 1, 3)
-            .reshape(bs * self.params.n_timecontrol_heads, seqlen, self.params.dim)
-        )
-        h = self.output(h).float().squeeze(-1)
-        h = h.reshape(
-            bs, self.params.n_timecontrol_heads, seqlen, self.params.n_output_vars
-        ).permute(0, 2, 1, 3)
-        return h
+
+        h = self._apply_timecontrol(h)
+        return self._get_move_pred(h), self._get_elo_pred(h)

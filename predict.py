@@ -1,14 +1,10 @@
 import argparse
-import os
 
 import torch
 import numpy as np
 
 from config import get_config
-from mmc import MimicChessModule, MMCModuleArgs
-from mmcdataset import NOOP, MMCDataModule
-from model import ModelArgs
-from utils import AccuracyStats, TargetStats
+from utils import AccuracyStats, TargetStats, init_modules
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
@@ -44,33 +40,8 @@ def evaluate(outputs, seq_len, elo_edges):
     return report
 
 
-def predict(cfgyml, datadir, cp, n_workers, n_samp):
-    model_args = ModelArgs(cfgyml.model_args)
-    model_args.n_output_vars = len(cfgyml.elo_edges) + 1
-    dm = MMCDataModule(
-        datadir=datadir,
-        elo_edges=cfgyml.elo_edges,
-        tc_groups=cfgyml.tc_groups,
-        max_seq_len=model_args.max_seq_len,
-        batch_size=cfgyml.batch_size,
-        num_workers=n_workers,
-        max_testsamp=n_samp,
-    )
-    model_args.n_timecontrol_heads = dm.n_tc_groups
-    module_args = MMCModuleArgs(
-        name=os.path.splitext(os.path.basename(cp))[0],
-        outdir=None,
-        model_args=model_args,
-        opening_moves=dm.opening_moves,
-        NOOP=NOOP,
-        lr_scheduler_params=cfgyml.lr_scheduler_params,
-        max_steps=cfgyml.max_steps,
-        val_check_steps=cfgyml.val_check_steps,
-        random_seed=cfgyml.random_seed,
-        strategy="auto",
-        devices=1,
-    )
-    mmc = MimicChessModule.load_from_checkpoint(cp, params=module_args)
+def predict(cfgyml, datadir, cp, n_samp):
+    mmc, dm = init_modules(cfgyml, "auto", 1, alt_datadir=datadir, n_samp=n_samp, cp=cp)
     return mmc.predict(dm), dm.max_seq_len - dm.opening_moves + 1
 
 
@@ -79,7 +50,6 @@ def main():
     cfgfn = args.cfg
     cfgyml = get_config(cfgfn)
 
-    n_workers = os.cpu_count() - 1
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
 
@@ -87,7 +57,7 @@ def main():
         cfgyml.batch_size = args.bs
 
     datadir = cfgyml.datadir if args.datadir is None else args.datadir
-    outputs, seq_len = predict(cfgyml, datadir, args.cp, n_workers, args.nsamp)
+    outputs, seq_len = predict(cfgyml, datadir, args.cp, args.nsamp)
     report = evaluate(outputs, seq_len, cfgyml.elo_edges)
     print()
     for line in report:

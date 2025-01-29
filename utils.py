@@ -1,7 +1,56 @@
-import numpy as np
-from pgn.py.lib.reconstruct import count_invalid
-from mmcdataset import NOOP
+import os
 from functools import partial
+
+import numpy as np
+import torch
+
+from mmc import MimicChessModule, MMCModuleArgs
+from mmcdataset import NOOP, MMCDataModule
+from model import ModelArgs
+from pgn.py.lib.reconstruct import count_invalid
+
+
+def init_modules(cfgyml, strategy, devices, alt_datadir=None, n_samp=None, cp=None):
+    n_workers = os.cpu_count() // devices if torch.cuda.is_available() else 0
+    datadir = cfgyml.datadir if alt_datadir is not None else alt_datadir
+    model_args = ModelArgs(cfgyml.model_args)
+    if cfgyml.predict_elo:
+        if cfgyml.elo_loss == "cross_entropy":
+            model_args.elo_pred_size = len(cfgyml.elo_edges) + 1
+        elif cfgyml.elo_loss == "gaussian_nll":
+            model_args.elo_pred_size = 2
+        else:
+            raise Exception("did not recognize loss function name")
+
+    model_args.elo_pred_size = len(cfgyml.elo_edges) + 1
+    dm = MMCDataModule(
+        datadir=datadir,
+        elo_edges=cfgyml.elo_edges,
+        tc_groups=cfgyml.tc_groups,
+        max_seq_len=model_args.max_seq_len,
+        batch_size=cfgyml.batch_size,
+        num_workers=n_workers,
+        max_testsamp=n_samp,
+    )
+    model_args.n_timecontrol_heads = dm.n_tc_groups
+    module_args = MMCModuleArgs(
+        name=os.path.splitext(os.path.basename(cp))[0],
+        outdir=None,
+        elo_loss=cfgyml.elo_loss,
+        model_args=model_args,
+        opening_moves=dm.opening_moves,
+        lr_scheduler_params=cfgyml.lr_scheduler_params,
+        max_steps=cfgyml.max_steps,
+        val_check_steps=cfgyml.val_check_steps,
+        random_seed=cfgyml.random_seed,
+        strategy=strategy,
+        devices=devices,
+    )
+    if cp is not None:
+        mmc = MimicChessModule.load_from_checkpoint(cp, params=module_args)
+    else:
+        mmc = MimicChessModule(module_args)
+    return mmc, dm
 
 
 class LegalGameStats:

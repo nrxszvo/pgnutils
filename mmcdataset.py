@@ -148,15 +148,19 @@ class MMCDataset(Dataset):
         opening = np.empty(self.opening_moves, dtype="int64")
         opening[:] = mvids[gs : gs + self.opening_moves]
 
-        tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
-        tgt[::2] = self._get_group(welo)
-        tgt[1::2] = self._get_group(belo)
+        elo_tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
+        elo_tgt[::2] = self._get_group(welo)
+        elo_tgt[1::2] = self._get_group(belo)
+
+        mv_tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
+        mv_tgt[:] = mvids[gs + self.opening_moves : gs + n_inp + 1]
 
         tc_id = self._get_tc_id(timectl, inc)
 
         return {
             "input": inp,
-            "target": tgt,
+            "elo_target": elo_tgt,
+            "move_target": mv_tgt,
             "opening": opening,
             "n_inp": n_inp,
             "tc_id": tc_id,
