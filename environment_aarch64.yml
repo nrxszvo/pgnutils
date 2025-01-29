@@ -1,12 +1,14 @@
 name: base 
 dependencies:
-  - anaconda::numpy=2.2
+  - anaconda::python=3.10
+  - anaconda::numpy=1.26
   - conda-forge::matplotlib
   - anaconda::pyyaml
   - conda-forge::chess
   - conda-forge::lightning
   - conda-forge::tensorboard
   - conda-forge::chess
+  - conda-forge::python-wget
   - anaconda::pip
   - pip:
       - fairscale

@@ -1,9 +1,17 @@
-datadir: datasets/lichess_300_1200_0924/split_30_11_900208/elos/2200
+datadir: datasets/lichess_180_10800_60_122024_v2/split_31_30_1m_900208
+predict_elo: True
+elo_loss: gaussian_nll
 elo_edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
+tc_groups: 
+ 180: [0,1000]
+ 300: [0,1000]
+ 600: [0,1000]
+ 1800: [1000]
+ 10800: [1000]
 model_args:
+  predict_move: True
   dim: 2048 
   n_layers: 16 
-  n_classifier_layers: 15
   n_heads: 32
   n_kv_heads: 8 
   vocab_size: 2048
@@ -16,9 +24,9 @@ lr_scheduler_params:
   lr: 3.e-4
   name: "WarmUpCosine"
   min_lr: 3.e-6
-  warmup_steps: 5000 
-batch_size: 64 
-max_steps: 2.e+5 
-val_check_steps: 50000
+  warmup_steps: 25000 
+batch_size: 256
+max_steps: 4.e+5 
+val_check_steps: 25000
 strategy: fsdp 
 random_seed: 0

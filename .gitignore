@@ -9,3 +9,6 @@ release/
 *.tmp
 *.npy
 L/
+.clangd
+processZst
+resizeMMap

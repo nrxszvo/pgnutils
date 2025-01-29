@@ -1,6 +1,56 @@
+import os
+from functools import partial
+
+import numpy as np
 import torch
+
+from mmc import MimicChessModule, MMCModuleArgs
+from mmcdataset import NOOP, MMCDataModule
+from model import ModelArgs
 from pgn.py.lib.reconstruct import count_invalid
-from mmcdataset import NOOP
+
+
+def init_modules(cfgyml, strategy, devices, alt_datadir=None, n_samp=None, cp=None):
+    n_workers = os.cpu_count() // devices if torch.cuda.is_available() else 0
+    datadir = cfgyml.datadir if alt_datadir is not None else alt_datadir
+    model_args = ModelArgs(cfgyml.model_args)
+    if cfgyml.predict_elo:
+        if cfgyml.elo_loss == "cross_entropy":
+            model_args.elo_pred_size = len(cfgyml.elo_edges) + 1
+        elif cfgyml.elo_loss == "gaussian_nll":
+            model_args.elo_pred_size = 2
+        else:
+            raise Exception("did not recognize loss function name")
+
+    model_args.elo_pred_size = len(cfgyml.elo_edges) + 1
+    dm = MMCDataModule(
+        datadir=datadir,
+        elo_edges=cfgyml.elo_edges,
+        tc_groups=cfgyml.tc_groups,
+        max_seq_len=model_args.max_seq_len,
+        batch_size=cfgyml.batch_size,
+        num_workers=n_workers,
+        max_testsamp=n_samp,
+    )
+    model_args.n_timecontrol_heads = dm.n_tc_groups
+    module_args = MMCModuleArgs(
+        name=os.path.splitext(os.path.basename(cp))[0],
+        outdir=None,
+        elo_loss=cfgyml.elo_loss,
+        model_args=model_args,
+        opening_moves=dm.opening_moves,
+        lr_scheduler_params=cfgyml.lr_scheduler_params,
+        max_steps=cfgyml.max_steps,
+        val_check_steps=cfgyml.val_check_steps,
+        random_seed=cfgyml.random_seed,
+        strategy=strategy,
+        devices=devices,
+    )
+    if cp is not None:
+        mmc = MimicChessModule.load_from_checkpoint(cp, params=module_args)
+    else:
+        mmc = MimicChessModule(module_args)
+    return mmc, dm
 
 
 class LegalGameStats:
@@ -23,52 +73,136 @@ class LegalGameStats:
     def report(self):
         lines = []
         lines.append(
-            f"Legal game frequency: {100*self.nvalid_games/self.ntotal_games:.3f}%"
+            f"Legal game frequency: {100 * self.nvalid_games / self.ntotal_games:.3f}%"
         )
         lines.append(
-            f"Legal move frequency: {100*self.nvalid_moves/self.ntotal_moves:.3f}%"
+            f"Legal move frequency: {100 * self.nvalid_moves / self.ntotal_moves:.3f}%"
         )
         return lines
 
 
-class MoveStats:
-    def __init__(self, elo_edges, ns=[1, 3, 5]):
-        self.edges = elo_edges
-        self.nheads = len(elo_edges)
-        self.stats = [{"n": n, "matches": [0] * self.nheads} for n in ns]
-        self.total_preds = [0] * self.nheads
+class TargetStats:
+    def __init__(self):
+        self.total_preds = 0
+        self.sum_t = 0
+        self.sum_adj = 0
 
-    def eval(self, tokens, heads, tgts):
-        for i in range(self.nheads):
-            for j in range(heads.shape[1]):
-                idx = (heads[:, j] == i).nonzero()[:, 0]
-                itgts = torch.index_select(tgts, 0, idx)
-                self.total_preds[i] += (itgts[:, 0, i::2] != NOOP).sum()
-
-        for s in self.stats:
-            move_matches = (tokens[:, : s["n"]] == tgts).sum(dim=1, keepdim=True)
-            move_matches[tgts == NOOP] = 0
-            for i in range(self.nheads):
-                for j in range(heads.shape[1]):
-                    idx = (heads[:, j] == i).nonzero()[:, 0]
-                    imatches = torch.index_select(move_matches, 0, idx)
-                    s["matches"][i] += imatches[:, 0, i::2].sum()
+    def eval(self, tprobs, adjprobs, tgts):
+        tprobs[tgts == NOOP] = 0
+        adjprobs[tgts == NOOP] = 0
+        self.sum_t += tprobs.sum()
+        self.sum_adj += adjprobs.sum()
+        self.total_preds += (tgts != NOOP).sum()
 
     def report(self):
+        return [
+            f"Mean target probability: {100 * self.sum_t / self.total_preds:.2f}%",
+            f"Mean adjacent probability: {100 * self.sum_adj / self.total_preds:.2f}%",
+        ]
+
+
+class AccuracyStats:
+    def __init__(self, seq_len, elo_edges, min_prob, ns=[1, 3]):
+        self.stats = [{"n": n, "matches": np.zeros(seq_len)} for n in ns]
+        self.min_prob = min_prob
+        self.total_preds = np.zeros(seq_len)
+        self.elo_edges = elo_edges
+        n_groups = len(elo_edges)
+        self.histo = np.zeros((n_groups, n_groups))
+        self.acc_mtx = np.zeros((n_groups, n_groups, 2))
+        self.err_mtx = np.zeros((n_groups, n_groups, 2))
+        self.move_mtx = np.zeros((n_groups, n_groups, 2))
+
+    def eval(self, tokens, probs, tgts):
+        tokens[probs < self.min_prob] = -1
+        for i in range(tgts.shape[0]):
+            self.histo[tgts[i, 0], tgts[i, 1]] += 1
+
+        npred = (tgts != NOOP).sum(dim=0).numpy()
+        self.total_preds += npred
+        for s in self.stats:
+            move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
+            move_matches[tgts == NOOP] = 0
+            s["matches"] += move_matches.sum(dim=0).numpy()
+
+            if s["n"] == 1:
+                for i in range(tgts.shape[0]):
+                    wE = tgts[i, 0]
+                    bE = tgts[i, 1]
+
+                    wM = move_matches[i, ::2].sum()
+                    bM = move_matches[i, 1::2].sum()
+                    self.acc_mtx[wE, bE, 0] += wM
+                    self.acc_mtx[wE, bE, 1] += bM
+
+                    errors = (tokens[i, 0] - tgts[i]).abs()
+                    errors[tgts[i] == NOOP] = 0
+                    wM = errors[::2].sum()
+                    bM = errors[1::2].sum()
+                    self.err_mtx[wE, bE, 0] += wM
+                    self.err_mtx[wE, bE, 1] += bM
+
+                    wN = (tgts[i, ::2] != NOOP).sum()
+                    bN = (tgts[i, 1::2] != NOOP).sum()
+                    self.move_mtx[wE, bE, 0] += wN
+                    self.move_mtx[wE, bE, 1] += bN
+
+    def report(self, SEQ_AVG=10):
         lines = []
         for s in self.stats:
-            tpred = 0
-            tmatch = 0
-            lines.append(f'Top {s["n"]} accuracy:')
-            for i in range(self.nheads):
-                if self.total_preds[i] > 0:
-                    e = self.edges[i]
+            lines.append(f"Top {s['n']} accuracy:")
+            for i, v in enumerate(self.total_preds):
+                if i % SEQ_AVG == 0:
+                    cum_acc = 0
+                    cum_v = 0
+                if v > 0:
+                    cum_acc += s["matches"][i]
+                    cum_v += v
+                if i % SEQ_AVG == (SEQ_AVG - 1) or i == len(self.total_preds) - 1:
                     lines.append(
-                        f"\t{e}: {100*s['matches'][i]/self.total_preds[i]:.2f}%"
+                        f"\t{SEQ_AVG * int(i / SEQ_AVG)}: {100 * cum_acc / cum_v:.1f}%"
                     )
-                    tpred += self.total_preds[i]
-                    tmatch += s["matches"][i]
-            lines.append(f"\tOverall: {100*tmatch/tpred:.2f}%")
+
+        def gen_mtx_report(mtx, fn, COLWIDTH=10):
+            lines.append("")
+            for wbin, row in reversed(list(enumerate(mtx))):
+                rowstr = f"{self.elo_edges[wbin]}".rjust(COLWIDTH)
+                for bbin, n in enumerate(row):
+                    rowstr += fn(n, wbin, bbin).rjust(COLWIDTH)
+                lines.append(rowstr)
+                lines.append("")
+            ax = "".rjust(COLWIDTH)
+            for e in self.elo_edges:
+                ax += f"{e}".rjust(COLWIDTH)
+            lines.append(ax)
+            lines.append("")
+
+        lines.append("Elo histogram:")
+        gen_mtx_report(self.histo, lambda data, *args: f"{int(data)}")
+
+        def fmt_acc(mul, cum_accs, wbin, bbin):
+            n_row = self.move_mtx[wbin]
+            Nw, Nb = n_row[bbin]
+            accW, accB = cum_accs
+            acc_str = ""
+            if Nw > 0:
+                acc = accW / Nw
+                acc_str += f"{mul * acc:.1f}, "
+            else:
+                acc_str += "- ,"
+            if Nb > 0:
+                acc = accB / Nb
+                acc_str += f"{mul * acc:.1f}"
+            else:
+                acc_str += "- "
+            return acc_str
+
+        lines.append("Avg Error Matrix:")
+        gen_mtx_report(self.err_mtx, partial(fmt_acc, 1), COLWIDTH=20)
+
+        lines.append("Accuracy Matrix:")
+        gen_mtx_report(self.acc_mtx, partial(fmt_acc, 100), COLWIDTH=20)
+
         return lines
 
 
@@ -103,10 +237,10 @@ class CheatStats:
             lines.append(f"\tElo < {stats.elo}")
             if stats.below[1] > 0:
                 lines.append(
-                    f"\t\tstockfish < target: {stats.below[0]/stats.below[1]:.4f} ({stats.below[1]} total moves)"
+                    f"\t\tstockfish < target: {stats.below[0] / stats.below[1]:.4f} ({stats.below[1]} total moves)"
                 )
             if stats.above[1] > 0:
                 lines.append(
-                    f"\t\tstockfish > target: {stats.above[0]/stats.above[1]:.4f} ({stats.above[1]} total moves)"
+                    f"\t\tstockfish > target: {stats.above[0] / stats.above[1]:.4f} ({stats.above[1]} total moves)"
                 )
         return lines

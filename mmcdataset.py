@@ -4,8 +4,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import lightning as L
 import json
-
-NOOP = 2 * 64 + 3  # white's QBISHOP on d1
+from pgn import NOOP
+from collections import OrderedDict
 
 
 def init_worker(seed):
@@ -14,32 +14,29 @@ def init_worker(seed):
 
 def collate_fn(batch):
     maxinp = 0
-    maxtgt = 0
     openmoves = batch[0]["opening"].shape[0]
     for d in batch:
-        inp = d["input"]
-        tgt = d["target"]
-        maxinp = max(maxinp, inp.shape[0])
-        maxtgt = max(maxtgt, tgt.shape[0])
+        maxinp = max(maxinp, d["n_inp"])
 
+    maxtgt = maxinp + 1 - openmoves
     bs = len(batch)
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
     targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
-
+    tc_groups = torch.full((bs,), NOOP, dtype=torch.int64)
     for i, d in enumerate(batch):
         inp = d["input"]
         tgt = d["target"]
-        ni = inp.shape[0]
-        nt = tgt.shape[0]
-        inputs[i, :ni] = torch.from_numpy(inp)
-        targets[i, :nt] = torch.from_numpy(tgt)
+        inputs[i, : inp.shape[0]] = torch.from_numpy(inp)
+        targets[i, : tgt.shape[0]] = torch.from_numpy(tgt)
         openings[i] = torch.from_numpy(d["opening"])
+        tc_groups[i] = d["tc_id"]
 
     return {
         "input": inputs,
         "target": targets,
         "opening": openings,
+        "tc_groups": tc_groups,
     }
 
 
@@ -59,6 +56,7 @@ def cheat_collate_fn(batch):
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     cheatdata = -torch.ones((bs, maxcd, 2), dtype=torch.int64)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
+    elos = torch.empty((bs, 2), dtype=torch.int64)
     wtargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     btargets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     heads = torch.empty((bs, 2), dtype=torch.int64)
@@ -78,6 +76,7 @@ def cheat_collate_fn(batch):
         wtargets[i, :nt] = torch.from_numpy(wtgt)
         btargets[i, :nt] = torch.from_numpy(btgt)
         openings[i] = torch.from_numpy(d["opening"])
+        elos[i] = d["elos"]
         heads[i, 0] = d["w_head"]
         heads[i, 1] = d["b_head"]
         offset_heads[i, 0] = i * nhead + heads[i, 0]
@@ -89,56 +88,82 @@ def cheat_collate_fn(batch):
         "w_target": wtargets,
         "b_target": btargets,
         "opening": openings,
+        "elos": elos,
         "heads": heads,
         "offset_heads": offset_heads,
     }
 
 
 class MMCDataset(Dataset):
-    WELO_ONLY = 0
-    BELO_ONLY = 1
-    BOTH = 2
-    NEITHER = -1
-
     def __init__(
         self,
         seq_len,
         opening_moves,
         indices,
-        mvids,
+        blocks,
+        elo_edges,
+        tc_groups,
+        max_nsamp=None,
     ):
         super().__init__()
         self.seq_len = seq_len
         self.opening_moves = opening_moves
         self.indices = indices
         self.nsamp = len(self.indices)
-        self.mvids = mvids
+        if max_nsamp is not None:
+            self.nsamp = min(max_nsamp, self.nsamp)
+
+        self.blocks = blocks
+        self.elo_edges = elo_edges
+        self.tc_groups = tc_groups
 
     def __len__(self):
         return self.nsamp
 
+    def _get_tc_id(self, tc, inc):
+        for tcgrp, incgrps in self.tc_groups.items():
+            if tc <= tcgrp:
+                for incgrp, tcid in incgrps.items():
+                    if inc <= incgrp:
+                        return tcid
+
+    def _get_group(self, elo):
+        for i, edge in enumerate(self.elo_edges):
+            if elo <= edge:
+                return i
+
     def __getitem__(self, idx):
-        gs, nmoves, cat = self.indices[idx]
-        n_inp = min(self.seq_len, nmoves - 1)
+        gidx, gs, nmoves, blk = self.indices[idx]
+
+        mvids = self.blocks[blk]["mvids"]
+        welo = self.blocks[blk]["welos"][gidx]
+        belo = self.blocks[blk]["belos"][gidx]
+        timectl = self.blocks[blk]["timectl"][gidx]
+        inc = self.blocks[blk]["increment"][gidx]
+
+        n_inp = min(self.seq_len, nmoves)
         inp = np.empty(n_inp, dtype="int32")
-        inp[:] = self.mvids[gs : gs + n_inp]
+        inp[:] = mvids[gs : gs + n_inp]
 
         opening = np.empty(self.opening_moves, dtype="int64")
-        opening[:] = self.mvids[gs : gs + self.opening_moves]
+        opening[:] = mvids[gs : gs + self.opening_moves]
 
-        tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
-        tgt[:] = self.mvids[gs + self.opening_moves : gs + n_inp + 1]
+        elo_tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
+        elo_tgt[::2] = self._get_group(welo)
+        elo_tgt[1::2] = self._get_group(belo)
 
-        if cat == MMCDataset.WELO_ONLY:
-            tgt[1::2] = NOOP
-        elif cat == MMCDataset.BELO_ONLY:
-            tgt[::2] = NOOP
+        mv_tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
+        mv_tgt[:] = mvids[gs + self.opening_moves : gs + n_inp + 1]
+
+        tc_id = self._get_tc_id(timectl, inc)
 
         return {
             "input": inp,
-            "target": tgt,
+            "elo_target": elo_tgt,
+            "move_target": mv_tgt,
             "opening": opening,
             "n_inp": n_inp,
+            "tc_id": tc_id,
         }
 
 
@@ -166,7 +191,10 @@ class MMCCheatingDataset(Dataset):
     def __len__(self):
         return self.nsamp
 
-    def _get_head(self, elo):
+    def _get_tc_id(self, tc, inc):
+        pass
+
+    def _get_group(self, elo):
         for i, edge in enumerate(self.elo_edges):
             if elo <= edge:
                 return i
@@ -188,8 +216,8 @@ class MMCCheatingDataset(Dataset):
         w_tgt[1::2] = NOOP
         b_tgt[::2] = NOOP
 
-        w_head = self._get_head(welo)
-        b_head = self._get_head(belo)
+        w_head = self._get_group(welo)
+        b_head = self._get_group(belo)
 
         cd = self.cheatdata[gidx]
 
@@ -207,18 +235,10 @@ class MMCCheatingDataset(Dataset):
 
 
 def load_data(dirname, load_cheatdata=False):
-    md = np.load(os.path.join(dirname, "md.npy"), allow_pickle=True).item()
     with open(f"{dirname}/fmd.json") as f:
         fmd = json.load(f)
     data = {
-        "md": md,
         "fmd": fmd,
-        "mvids": np.memmap(
-            os.path.join(dirname, "mvids.npy"),
-            mode="r",
-            dtype="int16",
-            shape=md["nmoves"],
-        ),
         "train": np.memmap(
             os.path.join(dirname, "train.npy"),
             mode="r",
@@ -238,27 +258,85 @@ def load_data(dirname, load_cheatdata=False):
             shape=tuple(fmd["test_shape"]),
         ),
     }
-    elodir = os.path.join(dirname, "elo.npy")
-    if os.path.exists(elodir):
-        data["elos"] = np.memmap(
-            elodir, mode="r", dtype="int16", shape=(fmd["ngames"], 2)
+    blocks = []
+    for blkdn in fmd["block_dirs"]:
+        dn = os.path.join(dirname, blkdn)
+        md = np.load(os.path.join(dn, "md.npy"), allow_pickle=True).item()
+        blocks.append(
+            {
+                "md": md,
+                "welos": np.memmap(
+                    os.path.join(dn, "welos.npy"),
+                    mode="r",
+                    dtype="int16",
+                    shape=md["ngames"],
+                ),
+                "belos": np.memmap(
+                    os.path.join(dn, "belos.npy"),
+                    mode="r",
+                    dtype="int16",
+                    shape=md["ngames"],
+                ),
+                "mvids": np.memmap(
+                    os.path.join(dn, "mvids.npy"),
+                    mode="r",
+                    dtype="int16",
+                    shape=md["nmoves"],
+                ),
+                "timectl": np.memmap(
+                    os.path.join(dn, "timeCtl.npy"), mode="r", dtype="int16"
+                ),
+                "increment": np.memmap(
+                    os.path.join(dn, "inc.npy"), mode="r", dtype="int16"
+                ),
+            }
         )
-    if load_cheatdata:
-        data["cheatdata"] = np.load(
-            os.path.join(dirname, "cheatdata.npy"), allow_pickle=True
-        ).item()
+    data["blocks"] = blocks
     return data
 
 
 class MMCDataModule(L.LightningDataModule):
+    def _validate_tc_groups(self):
+        tc_histo = {
+            int(tc): {int(inc): n for inc, n in incs.items()}
+            for tc, incs in self.fmd["tc_histo"].items()
+        }
+        for tc, incs in tc_histo.items():
+            for tcg, incgs in self.tc_groups.items():
+                if tc <= tcg:
+                    for inc in incs:
+                        for incg in incgs:
+                            if inc <= incg:
+                                break
+                        else:
+                            raise Exception(
+                                f"increment {inc} for tc group {tcg} is greater than largest inc group"
+                            )
+                    break
+            else:
+                raise Exception(f"time control {tc} is greater than largest tc group")
+
+    def _init_tc_groups(self, tc_groups):
+        self.tc_groups = OrderedDict()
+        tcid = 0
+        for tcg, incgs in sorted(tc_groups.items()):
+            self.tc_groups[tcg] = OrderedDict()
+            for inc in sorted(incgs):
+                self.tc_groups[tcg][inc] = tcid
+                tcid += 1
+        self.n_tc_groups = tcid
+        self._validate_tc_groups()
+
     def __init__(
         self,
         datadir,
         elo_edges,
+        tc_groups,
         max_seq_len,
         batch_size,
         num_workers,
         load_cheatdata=False,
+        max_testsamp=None,
     ):
         super().__init__()
         self.max_seq_len = max_seq_len
@@ -267,12 +345,15 @@ class MMCDataModule(L.LightningDataModule):
         self.elo_edges = elo_edges
         if len(self.elo_edges) == 0 or self.elo_edges[-1] < float("inf"):
             self.elo_edges.append(float("inf"))
+
         self.load_cheatdata = load_cheatdata
         self.__dict__.update(load_data(datadir, load_cheatdata))
+        self._init_tc_groups(tc_groups)
         # min_moves is the minimum game length that can be included in the dataset
         # we subtract one here so that it now represents the minimum number of moves that the
         # model must see before making its first prediction
         self.opening_moves = self.fmd["min_moves"] - 1
+        self.max_testsamp = max_testsamp
 
     def setup(self, stage):
         if stage == "fit":
@@ -280,20 +361,26 @@ class MMCDataModule(L.LightningDataModule):
                 self.max_seq_len,
                 self.opening_moves,
                 self.train,
-                self.mvids,
+                self.blocks,
+                self.elo_edges,
+                self.tc_groups,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.opening_moves,
                 self.val,
-                self.mvids,
+                self.blocks,
+                self.elo_edges,
+                self.tc_groups,
             )
         if stage == "validate":
             self.valset = MMCDataset(
                 self.max_seq_len,
                 self.opening_moves,
                 self.val,
-                self.mvids,
+                self.blocks,
+                self.elo_edges,
+                self.tc_groups,
             )
 
         if stage in ["test", "predict"]:
@@ -304,15 +391,18 @@ class MMCDataModule(L.LightningDataModule):
                     self.test,
                     self.cheatdata,
                     self.mvids,
-                    self.elos,
                     self.elo_edges,
+                    self.max_testsamp,
                 )
             else:
                 self.testset = MMCDataset(
                     self.max_seq_len,
                     self.opening_moves,
                     self.test,
-                    self.mvids,
+                    self.blocks,
+                    self.elo_edges,
+                    self.tc_groups,
+                    self.max_testsamp,
                 )
 
     def train_dataloader(self):

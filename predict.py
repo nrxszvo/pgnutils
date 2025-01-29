@@ -1,18 +1,10 @@
 import argparse
-import json
-import os
 
 import torch
+import numpy as np
 
 from config import get_config
-from mmc import MimicChessModule, MMCModuleArgs
-from mmcdataset import NOOP, MMCDataModule
-from model import ModelArgs
-from utils import (
-    LegalGameStats,
-    MoveStats,
-    CheatStats,
-)
+from utils import AccuracyStats, TargetStats, init_modules
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
@@ -26,56 +18,31 @@ parser.add_argument("--bs", default=None, type=int, help="batch size")
 parser.add_argument(
     "--report_fn", default=None, help="text file to write summary results"
 )
+parser.add_argument(
+    "--nsamp",
+    default=None,
+    help="maximum number of samples (games) to process",
+    type=int,
+)
 
 
 @torch.inference_mode()
-def evaluate(outputs, elo_edges):
-    gameStats = LegalGameStats()
-    moveStats = MoveStats(elo_edges)
-    cheatStats = CheatStats(elo_edges)
+def evaluate(outputs, seq_len, elo_edges):
     nbatch = len(outputs)
-
+    acc_stats = AccuracyStats(seq_len, elo_edges, 2 / len(elo_edges))
+    tstats = TargetStats()
+    nll = np.array([op["nll"] for op in outputs]).mean()
     for i, d in enumerate(outputs):
-        print(f"Evaluation {int(100*i/nbatch)}% done", end="\r")
-        stokens = d["sorted_tokens"]
-        tgts = d["targets"]
-        openings = d["openings"]
-        moveStats.eval(stokens, d["heads"], tgts)
-        gameStats.eval(stokens, openings, tgts)
-        cheatStats.eval(d["target_probs"], d["cheat_probs"], d["cheatdata"], d["heads"])
-
-    print()
-    report = gameStats.report() + moveStats.report() + cheatStats.report()
-    for line in report:
-        print(line)
+        print(f"Evaluation {int(100 * i / nbatch)}% done", end="\r")
+        acc_stats.eval(d["sorted_groups"], d["sorted_probs"], d["target_groups"])
+        tstats.eval(d["target_probs"], d["adjacent_probs"], d["target_groups"])
+    report = acc_stats.report() + tstats.report() + [f"NLL: {nll:.2f}"]
     return report
 
 
-def predict(cfgyml, datadir, cp, fmd, n_workers):
-    model_args = ModelArgs(cfgyml.model_args)
-    dm = MMCDataModule(
-        datadir=datadir,
-        elo_edges=cfgyml.elo_edges,
-        max_seq_len=model_args.max_seq_len,
-        batch_size=cfgyml.batch_size,
-        num_workers=n_workers,
-        load_cheatdata=True,
-    )
-    module_args = MMCModuleArgs(
-        name=os.path.splitext(os.path.basename(cp))[0],
-        outdir=None,
-        model_args=model_args,
-        opening_moves=dm.opening_moves,
-        NOOP=NOOP,
-        lr_scheduler_params=cfgyml.lr_scheduler_params,
-        max_steps=cfgyml.max_steps,
-        val_check_steps=cfgyml.val_check_steps,
-        random_seed=cfgyml.random_seed,
-        strategy="auto",
-        devices=1,
-    )
-    mmc = MimicChessModule.load_from_checkpoint(cp, params=module_args)
-    return mmc.predict(dm)
+def predict(cfgyml, datadir, cp, n_samp):
+    mmc, dm = init_modules(cfgyml, "auto", 1, alt_datadir=datadir, n_samp=n_samp, cp=cp)
+    return mmc.predict(dm), dm.max_seq_len - dm.opening_moves + 1
 
 
 def main():
@@ -83,7 +50,6 @@ def main():
     cfgfn = args.cfg
     cfgyml = get_config(cfgfn)
 
-    n_workers = os.cpu_count() - 1
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
 
@@ -91,11 +57,11 @@ def main():
         cfgyml.batch_size = args.bs
 
     datadir = cfgyml.datadir if args.datadir is None else args.datadir
-    with open(os.path.join(datadir, "fmd.json")) as f:
-        fmd = json.load(f)
-
-    outputs = predict(cfgyml, datadir, args.cp, fmd, n_workers)
-    report = evaluate(outputs, cfgyml.elo_edges)
+    outputs, seq_len = predict(cfgyml, datadir, args.cp, args.nsamp)
+    report = evaluate(outputs, seq_len, cfgyml.elo_edges)
+    print()
+    for line in report:
+        print(line)
     if args.report_fn is not None:
         with open(args.report_fn, "w") as f:
             f.write("\n".join(report))
