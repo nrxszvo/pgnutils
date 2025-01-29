@@ -219,9 +219,10 @@ class Transformer(nn.Module):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.output = nn.Linear(
-            params.dim, params.n_timecontrol_heads * params.n_elo_groups, bias=False
+        self.preproc = nn.Linear(
+            params.dim, params.n_timecontrol_heads * params.dim, bias=False
         )
+        self.output = nn.Linear(params.dim, params.n_elo_groups, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -244,9 +245,16 @@ class Transformer(nn.Module):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        h = self.output(h).float().squeeze(-1)
+        h = self.preproc(h)
+        h = F.silu(h)
         bs, seqlen, _ = h.shape
-        h = h.reshape(
-            bs, seqlen, self.params.n_timecontrol_heads, self.params.n_elo_groups
+        h = (
+            h.reshape(bs, seqlen, self.params.n_timecontrol_heads, self.params.dim)
+            .permute(0, 2, 1, 3)
+            .reshape(bs * self.params.n_timecontrol_heads, seqlen, self.params.dim)
         )
+        h = self.output(h).float().squeeze(-1)
+        h = h.reshape(
+            bs, self.params.n_timecontrol_heads, seqlen, self.params.n_elo_groups
+        ).permute(0, 2, 1, 3)
         return h
