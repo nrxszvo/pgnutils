@@ -71,7 +71,12 @@ def main():
     torch.manual_seed(cfgyml.random_seed)
 
     model_args = ModelArgs(cfgyml.model_args)
-    model_args.n_elo_groups = len(cfgyml.elo_edges) + 1
+    if cfgyml.loss == "cross_entropy":
+        model_args.n_output_vars = len(cfgyml.elo_edges) + 1
+    elif cfgyml.loss == "gaussian_nll":
+        model_args.n_output_vars = 2
+    else:
+        raise Exception("did not recognize loss function name")
 
     dm = MMCDataModule(
         cfgyml.datadir,

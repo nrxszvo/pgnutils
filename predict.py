@@ -2,6 +2,7 @@ import argparse
 import os
 
 import torch
+import numpy as np
 
 from config import get_config
 from mmc import MimicChessModule, MMCModuleArgs
@@ -34,17 +35,18 @@ def evaluate(outputs, seq_len, elo_edges):
     nbatch = len(outputs)
     acc_stats = AccuracyStats(seq_len, elo_edges, 2 / len(elo_edges))
     tstats = TargetStats()
+    nll = np.array([op["nll"] for op in outputs]).mean()
     for i, d in enumerate(outputs):
         print(f"Evaluation {int(100 * i / nbatch)}% done", end="\r")
         acc_stats.eval(d["sorted_groups"], d["sorted_probs"], d["target_groups"])
         tstats.eval(d["target_probs"], d["adjacent_probs"], d["target_groups"])
-    report = acc_stats.report() + tstats.report()
+    report = acc_stats.report() + tstats.report() + [f"NLL: {nll:.2f}"]
     return report
 
 
 def predict(cfgyml, datadir, cp, n_workers, n_samp):
     model_args = ModelArgs(cfgyml.model_args)
-    model_args.n_elo_groups = len(cfgyml.elo_edges) + 1
+    model_args.n_output_vars = len(cfgyml.elo_edges) + 1
     dm = MMCDataModule(
         datadir=datadir,
         elo_edges=cfgyml.elo_edges,

@@ -1,4 +1,5 @@
 datadir: datasets/lichess_180_10800_60_122024_v2/split_31_30_1m_900208
+loss: cross_entropy
 elo_edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
 tc_groups: 
  180: [0,1000]

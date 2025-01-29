@@ -17,7 +17,8 @@ class ModelArgs:
     n_heads: int = 32
     n_kv_heads: Optional[int] = None
     vocab_size: int = 2048
-    n_elo_groups: int = 10
+    n_output_vars: int = 10
+    n_timecontrol_heads: int = 1
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
     norm_eps: float = 1e-5
@@ -222,7 +223,7 @@ class Transformer(nn.Module):
         self.preproc = nn.Linear(
             params.dim, params.n_timecontrol_heads * params.dim, bias=False
         )
-        self.output = nn.Linear(params.dim, params.n_elo_groups, bias=False)
+        self.output = nn.Linear(params.dim, params.n_output_vars, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -255,6 +256,6 @@ class Transformer(nn.Module):
         )
         h = self.output(h).float().squeeze(-1)
         h = h.reshape(
-            bs, self.params.n_timecontrol_heads, seqlen, self.params.n_elo_groups
+            bs, self.params.n_timecontrol_heads, seqlen, self.params.n_output_vars
         ).permute(0, 2, 1, 3)
         return h

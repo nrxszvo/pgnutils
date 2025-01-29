@@ -21,6 +21,7 @@ from model import ModelArgs, Transformer
 class MMCModuleArgs:
     name: str
     outdir: str
+    loss: str
     model_args: ModelArgs
     opening_moves: int
     NOOP: int
@@ -44,7 +45,11 @@ class MimicChessModule(L.LightningModule):
         self.NOOP = params.NOOP
         self.val_check_steps = params.val_check_steps
         self.max_steps = params.max_steps
-        self.loss = F.cross_entropy
+        if params.loss == "cross_entropy":
+            self.loss = F.cross_entropy
+        elif params.loss == "gaussian_nll":
+            self.loss = F.gaussian_nll_loss
+
         if params.name:
             logger = TensorBoardLogger(".", name="L", version=params.name)
         else:
@@ -211,6 +216,7 @@ class MimicChessModule(L.LightningModule):
 
     def predict_step(self, batch, batch_idx):
         logits = self(batch["input"])
+        loss = self._get_loss(logits, batch["target"], batch["tc_groups"])
         logits = self._chomp_pred(logits, batch["tc_groups"])
         probs = torch.softmax(logits, dim=1)
 
@@ -239,6 +245,7 @@ class MimicChessModule(L.LightningModule):
             "target_probs": tprobs,
             "adjacent_probs": adjprobs,
             "target_groups": tgts,
+            "nll": loss.item(),
         }
 
     def fit(self, datamodule, ckpt=None):
