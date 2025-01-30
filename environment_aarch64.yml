@@ -1,7 +1,6 @@
 name: base 
 dependencies:
-  - anaconda::python=3.10
-  - anaconda::numpy=1.26
+  - anaconda::numpy=2.2
   - conda-forge::matplotlib
   - anaconda::pyyaml
   - conda-forge::chess
