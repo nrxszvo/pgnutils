@@ -13,6 +13,7 @@ from torch.optim.lr_scheduler import (
     SequentialLR,
     StepLR,
 )
+from torch.distributions.normal import Normal
 
 from model import ModelArgs, Transformer
 from mmcdataset import NOOP
@@ -23,6 +24,7 @@ class MMCModuleArgs:
     name: str
     outdir: str
     elo_loss: str
+    elo_loss_weight: float
     model_args: ModelArgs
     opening_moves: int
     lr_scheduler_params: Dict
@@ -45,10 +47,6 @@ class MimicChessModule(L.LightningModule):
         self.val_check_steps = params.val_check_steps
         self.max_steps = params.max_steps
         self.move_loss = F.cross_entropy
-        if params.elo_loss == "cross_entropy":
-            self.elo_loss = F.cross_entropy
-        elif params.elo_loss == "gaussian_nll":
-            self.elo_loss = F.gaussian_nll_loss
 
         if params.name:
             logger = TensorBoardLogger(".", name="L", version=params.name)
@@ -177,21 +175,27 @@ class MimicChessModule(L.LightningModule):
         return pred[:, :, self.opening_moves - 1 :]
 
     def _get_loss(self, move_pred, elo_pred, batch):
+        elo_loss = None
+        move_loss = None
         loss = 0
         if move_pred is not None:
-            loss += self._get_move_loss(move_pred, batch)
+            move_loss = self._get_move_loss(move_pred, batch)
+            loss += move_loss
         if elo_pred is not None:
-            loss += self.params.elo_loss_weight * self._get_elo_loss(elo_pred, batch)
-        return loss
+            elo_loss = self._get_elo_loss(elo_pred, batch)
+            loss += self.params.elo_loss_weight * elo_loss
+
+        return loss, move_loss, elo_loss
 
     def _get_elo_loss(self, elo_pred, batch):
         elo_pred = self._chomp_pred(elo_pred, batch)
         if self.params.elo_loss == "cross_entropy":
             loss = F.cross_entropy(elo_pred, batch["elo_target"], ignore_index=NOOP)
         elif self.params.elo_loss == "gaussian_nll":
-            exp = elo_pred[:, :, 0]
-            var = elo_pred[:, :, 1]
-            exp[batch["elo_target"] == NOOP] == NOOP
+            exp = elo_pred[:, 0]
+            var = elo_pred[:, 1]
+            exp[batch["elo_target"] == NOOP] = NOOP
+            var[batch["elo_target"] == NOOP] = 0
             loss = F.gaussian_nll_loss(exp, batch["elo_target"], var)
         return loss
 
@@ -248,7 +252,7 @@ class MimicChessModule(L.LightningModule):
         move_pred, elo_pred = self(batch["input"])
         loss, move_loss, elo_loss = self._get_loss(move_pred, elo_pred, batch)
 
-        move_data, elo_data = None
+        move_data = elo_data = None
         if move_pred is not None:
             move_pred = self._chomp_pred(move_pred, batch)
             probs = torch.softmax(move_pred, dim=1)
@@ -257,7 +261,7 @@ class MimicChessModule(L.LightningModule):
             smoves = smoves[:, :5]
 
             tgts = batch["move_target"]
-            mask = F.one_hot(tgts, probs.shape[1])
+            mask = F.one_hot(tgts, probs.shape[1]).permute(0, 2, 1)
             tprobs = (probs * mask).sum(dim=1)
 
             move_data = {
@@ -266,43 +270,52 @@ class MimicChessModule(L.LightningModule):
                 "target_probs": tprobs,
                 "openings": batch["opening"],
                 "targets": tgts,
+                "loss": move_loss.item(),
             }
 
         if elo_pred is not None:
             elo_pred = self._chomp_pred(elo_pred, batch)
+            sprobs = None
+            sgrps = None
             if self.params.elo_loss == "cross_entropy":
                 probs = torch.softmax(elo_pred, dim=1)
-            elif self.params.elo_loss == "gaussian_nll":
-                probs = None
-
-            sprobs, sgrps = torch.sort(probs, dim=1, descending=True)
-            sprobs = sprobs[:, :5]
-            sgrps = sgrps[:, :5]
+                sprobs, sgrps = torch.sort(probs, dim=1, descending=True)
+                sprobs = sprobs[:, :5]
+                sgrps = sgrps[:, :5]
 
             tgts = batch["elo_target"]
             wtgt = tgts[:, 0]
             btgt = tgts[:, 1]
             _, nclass, _ = probs.shape
-            tprobs = torch.empty_like(probs)
-            adjprobs = torch.empty_like(probs)
-            for i, tgt in enumerate([wtgt, btgt]):
-                mask = F.one_hot(tgt, nclass).unsqueeze(-1)
-                lo = F.one_hot(torch.clamp(tgt - 1, min=0), nclass).unsqueeze(-1)
-                hi = F.one_hot(torch.clamp(tgt + 1, max=nclass - 1), nclass).unsqueeze(
-                    -1
-                )
-                tprobs[:, :, i::2] = probs[:, :, i::2] * mask
-                adjprobs[:, :, i::2] = probs[:, :, i::2] * (mask + lo + hi)
-            tprobs = tprobs.sum(dim=1)
-            adjprobs = adjprobs.sum(dim=1)
+
+            tprobs = None
+            adjprobs = None
+            cdf_score = None
+            if self.params.elo_loss == "cross_entropy":
+                tprobs = torch.empty_like(probs)
+                adjprobs = torch.empty_like(probs)
+                for i, tgt in enumerate([wtgt, btgt]):
+                    mask = F.one_hot(tgt, nclass).unsqueeze(-1)
+                    lo = F.one_hot(torch.clamp(tgt - 1, min=0), nclass).unsqueeze(-1)
+                    hi = F.one_hot(
+                        torch.clamp(tgt + 1, max=nclass - 1), nclass
+                    ).unsqueeze(-1)
+                    tprobs[:, :, i::2] = probs[:, :, i::2] * mask
+                    adjprobs[:, :, i::2] = probs[:, :, i::2] * (mask + lo + hi)
+                tprobs = tprobs.sum(dim=1)
+                adjprobs = adjprobs.sum(dim=1)
+            elif self.params.elo_loss == "gaussian_nll":
+                m = Normal(elo_pred[:, 0], elo_pred[:, 1].clamp(min=1e-6))
+                cdf_score = 1 - 2 * (m.cdf(tgts) - 0.5).abs()
 
             elo_data = {
                 "sorted_probs": sprobs,
                 "sorted_groups": sgrps,
                 "target_probs": tprobs,
                 "adjacent_probs": adjprobs,
+                "cdf_score": cdf_score,
                 "target_groups": tgts,
-                "nll": loss.item(),
+                "loss": elo_loss.item(),
             }
 
         return move_data, elo_data

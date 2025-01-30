@@ -22,19 +22,29 @@ def collate_fn(batch):
     bs = len(batch)
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
-    targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
-    tc_groups = torch.full((bs,), NOOP, dtype=torch.int64)
+    elo_targets = torch.full(
+        (bs, maxtgt),
+        NOOP,
+        dtype=torch.float32
+        if batch[0]["elo_target"].dtype == "float32"
+        else torch.int64,
+    )
+    move_targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
+    tc_groups = torch.empty(bs, dtype=torch.int64)
     for i, d in enumerate(batch):
         inp = d["input"]
-        tgt = d["target"]
+        elo_tgt = d["elo_target"]
+        mv_tgt = d["move_target"]
         inputs[i, : inp.shape[0]] = torch.from_numpy(inp)
-        targets[i, : tgt.shape[0]] = torch.from_numpy(tgt)
+        elo_targets[i, : elo_tgt.shape[0]] = torch.from_numpy(elo_tgt)
+        move_targets[i, : mv_tgt.shape[0]] = torch.from_numpy(mv_tgt)
         openings[i] = torch.from_numpy(d["opening"])
         tc_groups[i] = d["tc_id"]
 
     return {
         "input": inputs,
-        "target": targets,
+        "elo_target": elo_targets,
+        "move_target": move_targets,
         "opening": openings,
         "tc_groups": tc_groups,
     }
@@ -103,6 +113,7 @@ class MMCDataset(Dataset):
         blocks,
         elo_edges,
         tc_groups,
+        whiten_elos,
         max_nsamp=None,
     ):
         super().__init__()
@@ -116,6 +127,7 @@ class MMCDataset(Dataset):
         self.blocks = blocks
         self.elo_edges = elo_edges
         self.tc_groups = tc_groups
+        self.whiten_elos = whiten_elos
 
     def __len__(self):
         return self.nsamp
@@ -142,18 +154,25 @@ class MMCDataset(Dataset):
         inc = self.blocks[blk]["increment"][gidx]
 
         n_inp = min(self.seq_len, nmoves)
-        inp = np.empty(n_inp, dtype="int32")
-        inp[:] = mvids[gs : gs + n_inp]
+        inp = np.empty(n_inp - 1, dtype="int32")
+        inp[:] = mvids[gs : gs + n_inp - 1]
 
         opening = np.empty(self.opening_moves, dtype="int64")
         opening[:] = mvids[gs : gs + self.opening_moves]
 
-        elo_tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
-        elo_tgt[::2] = self._get_group(welo)
-        elo_tgt[1::2] = self._get_group(belo)
+        elo_tgt = np.empty(
+            n_inp - self.opening_moves,
+            dtype="float32" if self.whiten_elos else "int64",
+        )
+        if self.whiten_elos:
+            elo_tgt[::2] = welo
+            elo_tgt[1::2] = belo
+        else:
+            elo_tgt[::2] = self._get_group(welo)
+            elo_tgt[1::2] = self._get_group(belo)
 
-        mv_tgt = np.empty(n_inp + 1 - self.opening_moves, dtype="int64")
-        mv_tgt[:] = mvids[gs + self.opening_moves : gs + n_inp + 1]
+        mv_tgt = np.empty(n_inp - self.opening_moves, dtype="int64")
+        mv_tgt[:] = mvids[gs + self.opening_moves : gs + n_inp]
 
         tc_id = self._get_tc_id(timectl, inc)
 
@@ -234,7 +253,7 @@ class MMCCheatingDataset(Dataset):
         }
 
 
-def load_data(dirname, load_cheatdata=False):
+def load_data(dirname, load_cheatdata=False, gaussian_elo=True):
     with open(f"{dirname}/fmd.json") as f:
         fmd = json.load(f)
     data = {
@@ -266,15 +285,19 @@ def load_data(dirname, load_cheatdata=False):
             {
                 "md": md,
                 "welos": np.memmap(
-                    os.path.join(dn, "welos.npy"),
+                    os.path.join(
+                        dn, "whitened_welos.npy" if gaussian_elo else "welos.npy"
+                    ),
                     mode="r",
-                    dtype="int16",
+                    dtype="float32" if gaussian_elo else "int16",
                     shape=md["ngames"],
                 ),
                 "belos": np.memmap(
-                    os.path.join(dn, "belos.npy"),
+                    os.path.join(
+                        dn, "whitened_belos.npy" if gaussian_elo else "belos.npy"
+                    ),
                     mode="r",
-                    dtype="int16",
+                    dtype="float32" if gaussian_elo else "int16",
                     shape=md["ngames"],
                 ),
                 "mvids": np.memmap(
@@ -335,6 +358,7 @@ class MMCDataModule(L.LightningDataModule):
         max_seq_len,
         batch_size,
         num_workers,
+        whiten_elos=True,
         load_cheatdata=False,
         max_testsamp=None,
     ):
@@ -347,7 +371,8 @@ class MMCDataModule(L.LightningDataModule):
             self.elo_edges.append(float("inf"))
 
         self.load_cheatdata = load_cheatdata
-        self.__dict__.update(load_data(datadir, load_cheatdata))
+        self.whiten_elos = whiten_elos
+        self.__dict__.update(load_data(datadir, load_cheatdata, whiten_elos))
         self._init_tc_groups(tc_groups)
         # min_moves is the minimum game length that can be included in the dataset
         # we subtract one here so that it now represents the minimum number of moves that the
@@ -364,6 +389,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.blocks,
                 self.elo_edges,
                 self.tc_groups,
+                self.whiten_elos,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
@@ -372,6 +398,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.blocks,
                 self.elo_edges,
                 self.tc_groups,
+                self.whiten_elos,
             )
         if stage == "validate":
             self.valset = MMCDataset(
@@ -381,6 +408,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.blocks,
                 self.elo_edges,
                 self.tc_groups,
+                self.whiten_elos,
             )
 
         if stage in ["test", "predict"]:
@@ -402,6 +430,7 @@ class MMCDataModule(L.LightningDataModule):
                     self.blocks,
                     self.elo_edges,
                     self.tc_groups,
+                    self.whiten_elos,
                     self.max_testsamp,
                 )
 

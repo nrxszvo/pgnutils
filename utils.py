@@ -10,11 +10,14 @@ from model import ModelArgs
 from pgn.py.lib.reconstruct import count_invalid
 
 
-def init_modules(cfgyml, strategy, devices, alt_datadir=None, n_samp=None, cp=None):
+def init_modules(
+    cfgyml, name, strategy, devices, alt_datadir=None, n_samp=None, cp=None, outdir=None
+):
     n_workers = os.cpu_count() // devices if torch.cuda.is_available() else 0
-    datadir = cfgyml.datadir if alt_datadir is not None else alt_datadir
+    datadir = cfgyml.datadir if alt_datadir is None else alt_datadir
     model_args = ModelArgs(cfgyml.model_args)
     if cfgyml.predict_elo:
+        model_args.gaussian_elo = cfgyml.elo_loss == "gaussian_nll"
         if cfgyml.elo_loss == "cross_entropy":
             model_args.elo_pred_size = len(cfgyml.elo_edges) + 1
         elif cfgyml.elo_loss == "gaussian_nll":
@@ -22,7 +25,6 @@ def init_modules(cfgyml, strategy, devices, alt_datadir=None, n_samp=None, cp=No
         else:
             raise Exception("did not recognize loss function name")
 
-    model_args.elo_pred_size = len(cfgyml.elo_edges) + 1
     dm = MMCDataModule(
         datadir=datadir,
         elo_edges=cfgyml.elo_edges,
@@ -30,13 +32,15 @@ def init_modules(cfgyml, strategy, devices, alt_datadir=None, n_samp=None, cp=No
         max_seq_len=model_args.max_seq_len,
         batch_size=cfgyml.batch_size,
         num_workers=n_workers,
+        whiten_elos=model_args.gaussian_elo,
         max_testsamp=n_samp,
     )
     model_args.n_timecontrol_heads = dm.n_tc_groups
     module_args = MMCModuleArgs(
-        name=os.path.splitext(os.path.basename(cp))[0],
-        outdir=None,
+        name=name,
+        outdir=outdir,
         elo_loss=cfgyml.elo_loss,
+        elo_loss_weight=cfgyml.elo_loss_weight,
         model_args=model_args,
         opening_moves=dm.opening_moves,
         lr_scheduler_params=cfgyml.lr_scheduler_params,
@@ -64,7 +68,7 @@ class LegalGameStats:
         self.ntotal_games += tokens.shape[0]
         for game in zip(tokens, opening, tgts):
             pred, opn, tgt = game
-            nmoves, nfail = count_invalid(pred[0], opn, tgt[0])
+            nmoves, nfail = count_invalid(pred[0], opn, tgt)
             self.nvalid_moves += nmoves - nfail
             self.ntotal_moves += nmoves
             if nfail == 0:
@@ -87,16 +91,21 @@ class TargetStats:
         self.sum_t = 0
         self.sum_adj = 0
 
-    def eval(self, tprobs, adjprobs, tgts):
-        tprobs[tgts == NOOP] = 0
-        adjprobs[tgts == NOOP] = 0
-        self.sum_t += tprobs.sum()
-        self.sum_adj += adjprobs.sum()
+    def eval(self, tprobs, adjprobs, tgts, cdf_scores):
+        if tprobs is not None:
+            tprobs[tgts == NOOP] = 0
+            adjprobs[tgts == NOOP] = 0
+            self.sum_t += tprobs.sum()
+            self.sum_adj += adjprobs.sum()
+        if cdf_scores is not None:
+            cdf_scores[tgts == NOOP] = 0
+            self.sum_t += cdf_scores.sum()
+
         self.total_preds += (tgts != NOOP).sum()
 
     def report(self):
         return [
-            f"Mean target probability: {100 * self.sum_t / self.total_preds:.2f}%",
+            f"Mean target probability/cdf score: {100 * self.sum_t / self.total_preds:.2f}%",
             f"Mean adjacent probability: {100 * self.sum_adj / self.total_preds:.2f}%",
         ]
 
@@ -148,6 +157,8 @@ class AccuracyStats:
                     self.move_mtx[wE, bE, 1] += bN
 
     def report(self, SEQ_AVG=10):
+        if self.total_preds.sum() == 0:
+            return []
         lines = []
         for s in self.stats:
             lines.append(f"Top {s['n']} accuracy:")
@@ -203,6 +214,28 @@ class AccuracyStats:
         lines.append("Accuracy Matrix:")
         gen_mtx_report(self.acc_mtx, partial(fmt_acc, 100), COLWIDTH=20)
 
+        return lines
+
+
+class MoveStats:
+    def __init__(self, ns=[1, 3, 5]):
+        self.stats = [{"n": n, "matches": 0} for n in ns]
+        self.total_preds = 0
+
+    def eval(self, tokens, tgts):
+        self.total_preds += (tgts != NOOP).sum()
+
+        for s in self.stats:
+            move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
+            move_matches[tgts == NOOP] = 0
+            s["matches"] += move_matches.sum()
+
+    def report(self):
+        lines = []
+        for s in self.stats:
+            lines.append(
+                f"Top {s['n']} move accuracy: {100 * s['matches'] / self.total_preds:.2f}%"
+            )
         return lines
 
 

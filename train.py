@@ -67,11 +67,17 @@ def main():
     torch.set_float32_matmul_precision("high")
     torch.manual_seed(cfgyml.random_seed)
 
-    mmc, dm = init_modules(cfgyml, cfgyml.strategy, devices)
+    mmc, dm = init_modules(
+        cfgyml,
+        args.name,
+        cfgyml.strategy,
+        devices,
+        outdir=os.path.join(save_path, "ckpt"),
+    )
 
     nweights, nflpweights = mmc.num_params()
     est_tflops = (
-        6 * nflpweights * cfgyml.batch_size * cfgyml.model_args.max_seq_len / 1e12
+        6 * nflpweights * cfgyml.batch_size * cfgyml.model_args["max_seq_len"] / 1e12
     )
     print(f"# model params: {nweights:.2e}")
     print(f"estimated TFLOPs: {est_tflops:.1f}")

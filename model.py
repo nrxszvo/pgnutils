@@ -19,6 +19,7 @@ class ModelArgs:
     vocab_size: int = 2048
     predict_move: bool = True
     elo_pred_size: int = 10
+    guassian_elo: bool = True
     n_timecontrol_heads: int = 1
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
@@ -252,24 +253,26 @@ class Transformer(nn.Module):
         if self.params.elo_pred_size == 0:
             return None
 
-        bs, seqlen, _ = h.shape
         h = self.elo_output(h).float()
+        bs, seqlen, dim = h.shape
         h = (
-            h.reshape(
-                bs, self.params.n_timecontrol_heads, seqlen, self.params.elo_pred_size
-            )
+            h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
             .permute(0, 2, 1, 3)
             .squeeze()
         )
+        if self.params.guassian_elo:
+            # make sure variance is non-negative
+            h[:, :, :, 1] = h[:, :, :, 1].exp()
+
         return h
 
     def _get_move_pred(self, h: torch.Tensor):
         if self.params.predict_move:
-            bs, seqlen, _ = h.shape
             h = self.move_output(h).float()
+            bs, seqlen, dim = h.shape
             h = (
-                h.reshape(bs, self.params.n_timecontrol_heads, seqlen)
-                .permute(0, 2, 1)
+                h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
+                .permute(0, 2, 1, 3)
                 .squeeze()
             )
             return h

@@ -1,10 +1,11 @@
 import argparse
+import os
 
 import torch
 import numpy as np
 
 from config import get_config
-from utils import AccuracyStats, TargetStats, init_modules
+from utils import AccuracyStats, TargetStats, LegalGameStats, MoveStats, init_modules
 
 parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("--cfg", required=True, help="yaml config file")
@@ -31,17 +32,46 @@ def evaluate(outputs, seq_len, elo_edges):
     nbatch = len(outputs)
     acc_stats = AccuracyStats(seq_len, elo_edges, 2 / len(elo_edges))
     tstats = TargetStats()
-    nll = np.array([op["nll"] for op in outputs]).mean()
-    for i, d in enumerate(outputs):
+    game_stats = LegalGameStats()
+    move_stats = MoveStats()
+
+    elo_loss = np.array([elo_op["loss"] for mv_op, elo_op in outputs]).mean()
+    move_loss = np.array([mv_op["loss"] for mv_op, elo_op in outputs]).mean()
+
+    for i, (move_data, elo_data) in enumerate(outputs):
         print(f"Evaluation {int(100 * i / nbatch)}% done", end="\r")
-        acc_stats.eval(d["sorted_groups"], d["sorted_probs"], d["target_groups"])
-        tstats.eval(d["target_probs"], d["adjacent_probs"], d["target_groups"])
-    report = acc_stats.report() + tstats.report() + [f"NLL: {nll:.2f}"]
+        if elo_data["sorted_groups"] is not None:
+            acc_stats.eval(
+                elo_data["sorted_groups"],
+                elo_data["sorted_probs"],
+                elo_data["target_groups"],
+            )
+        tstats.eval(
+            elo_data["target_probs"],
+            elo_data["adjacent_probs"],
+            elo_data["target_groups"],
+            elo_data["cdf_score"],
+        )
+        game_stats.eval(
+            move_data["sorted_tokens"], move_data["openings"], move_data["targets"]
+        )
+        move_stats.eval(move_data["sorted_tokens"], move_data["targets"])
+
+    report = (
+        acc_stats.report()
+        + tstats.report()
+        + game_stats.report()
+        + move_stats.report()
+        + [f"Elo loss: {elo_loss:.2f}", f"Move loss: {move_loss:.2f}"]
+    )
     return report
 
 
 def predict(cfgyml, datadir, cp, n_samp):
-    mmc, dm = init_modules(cfgyml, "auto", 1, alt_datadir=datadir, n_samp=n_samp, cp=cp)
+    name = (os.path.splitext(os.path.basename(cp))[0],)
+    mmc, dm = init_modules(
+        cfgyml, name, "auto", 1, alt_datadir=datadir, n_samp=n_samp, cp=cp
+    )
     return mmc.predict(dm), dm.max_seq_len - dm.opening_moves + 1
 
 

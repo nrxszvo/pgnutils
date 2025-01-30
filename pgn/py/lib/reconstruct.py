@@ -108,7 +108,10 @@ def count_invalid(mvids, opening, tgts):
             nfail += 1
 
         uci = mvid_to_uci(tgt, board_state, white, black)
-        board.push(chess.Move.from_uci(uci))
+        try:
+            board.push(chess.Move.from_uci(uci))
+        except:
+            breakpoint()
 
     return nmoves, nfail
 
