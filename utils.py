@@ -3,6 +3,7 @@ from functools import partial
 
 import numpy as np
 import torch
+from multiprocessing import Queue, Process
 
 from mmc import MimicChessModule, MMCModuleArgs
 from mmcdataset import NOOP, MMCDataModule
@@ -11,9 +12,19 @@ from pgn.py.lib.reconstruct import count_invalid
 
 
 def init_modules(
-    cfgyml, name, strategy, devices, alt_datadir=None, n_samp=None, cp=None, outdir=None
+    cfgyml,
+    name,
+    strategy,
+    devices,
+    alt_datadir=None,
+    n_samp=None,
+    cp=None,
+    outdir=None,
+    n_workers=None,
+    constant_var=False,
 ):
-    n_workers = os.cpu_count() // devices if torch.cuda.is_available() else 0
+    if n_workers is None:
+        n_workers = os.cpu_count() // devices if torch.cuda.is_available() else 0
     datadir = cfgyml.datadir if alt_datadir is None else alt_datadir
     model_args = ModelArgs(cfgyml.model_args)
     if cfgyml.predict_elo:
@@ -49,6 +60,8 @@ def init_modules(
         random_seed=cfgyml.random_seed,
         strategy=strategy,
         devices=devices,
+        initial_var=cfgyml.initial_var,
+        constant_var=constant_var,
     )
     if cp is not None:
         mmc = MimicChessModule.load_from_checkpoint(cp, params=module_args)
@@ -58,21 +71,49 @@ def init_modules(
 
 
 class LegalGameStats:
-    def __init__(self):
+    def eval_game(gameq, resultsq):
+        while True:
+            pred, opn, tgt = gameq.get()
+            if pred is None:
+                break
+            nmoves, nfail = count_invalid(pred[0], opn, tgt)
+            nvalid_moves = nmoves - nfail
+            resultsq.put((nvalid_moves, nmoves, nfail == 0))
+
+    def __init__(self, nproc=os.cpu_count() - 1):
         self.nvalid_games = 0
         self.ntotal_games = 0
         self.nvalid_moves = 0
         self.ntotal_moves = 0
+        self.gameq = Queue()
+        self.resultq = Queue()
+        self.procs = []
+        for _ in range(nproc):
+            p = Process(
+                target=LegalGameStats.eval_game, args=(self.gameq, self.resultq)
+            )
+            p.daemon = True
+            p.start()
+            self.procs.append(p)
 
     def eval(self, tokens, opening, tgts):
         self.ntotal_games += tokens.shape[0]
+        ngames = len(tokens)
         for game in zip(tokens, opening, tgts):
-            pred, opn, tgt = game
-            nmoves, nfail = count_invalid(pred[0], opn, tgt)
-            self.nvalid_moves += nmoves - nfail
+            self.gameq.put(game)
+
+        for _ in range(ngames):
+            nvalid_moves, nmoves, is_valid_game = self.resultq.get()
+            self.nvalid_moves += nvalid_moves
             self.ntotal_moves += nmoves
-            if nfail == 0:
+            if is_valid_game:
                 self.nvalid_games += 1
+
+    def __del__(self):
+        for _ in range(len(self.procs)):
+            self.gameq.put((None, None, None))
+        for p in self.procs:
+            p.join()
 
     def report(self):
         lines = []
@@ -127,12 +168,12 @@ class AccuracyStats:
         for i in range(tgts.shape[0]):
             self.histo[tgts[i, 0], tgts[i, 1]] += 1
 
-        npred = (tgts != NOOP).sum(dim=0).numpy()
+        npred = (tgts != NOOP).sum(axis=0)
         self.total_preds += npred
         for s in self.stats:
-            move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
+            move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(axis=1)
             move_matches[tgts == NOOP] = 0
-            s["matches"] += move_matches.sum(dim=0).numpy()
+            s["matches"] += move_matches.sum(axis=0)
 
             if s["n"] == 1:
                 for i in range(tgts.shape[0]):
@@ -226,7 +267,7 @@ class MoveStats:
         self.total_preds += (tgts != NOOP).sum()
 
         for s in self.stats:
-            move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(dim=1)
+            move_matches = (tokens[:, : s["n"]] == tgts[:, None]).sum(axis=1)
             move_matches[tgts == NOOP] = 0
             s["matches"] += move_matches.sum()
 

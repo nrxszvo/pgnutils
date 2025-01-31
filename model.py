@@ -250,21 +250,21 @@ class Transformer(nn.Module):
         return h
 
     def _get_elo_pred(self, h: torch.Tensor):
-        if self.params.elo_pred_size == 0:
+        if self.params.elo_pred_size > 0:
+            h = self.elo_output(h).float()
+            bs, seqlen, dim = h.shape
+            h = (
+                h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
+                .permute(0, 2, 1, 3)
+                .squeeze()
+            )
+            if self.params.guassian_elo:
+                # make sure variance is non-negative
+                h[:, :, :, 1] = h[:, :, :, 1].exp()
+
+            return h
+        else:
             return None
-
-        h = self.elo_output(h).float()
-        bs, seqlen, dim = h.shape
-        h = (
-            h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
-            .permute(0, 2, 1, 3)
-            .squeeze()
-        )
-        if self.params.guassian_elo:
-            # make sure variance is non-negative
-            h[:, :, :, 1] = h[:, :, :, 1].exp()
-
-        return h
 
     def _get_move_pred(self, h: torch.Tensor):
         if self.params.predict_move:
