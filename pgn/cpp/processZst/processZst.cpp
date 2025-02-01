@@ -27,15 +27,15 @@ ABSL_FLAG(bool, allowNoClock, false, "Allow games with no clock time data to be 
 
 void writeNpy(std::string outdir, std::shared_ptr<ParserOutput> res) {
 
-	std::vector<int16_t> elos(res->welos.size() + res->belos.size());
+	std::vector<int16_t> elos;
 	elos.insert(elos.begin(), res->welos.begin(), res->welos.end());
 	elos.insert(elos.begin() + res->welos.size(), res->belos.begin(), res->belos.end());
 
-	std::vector<int16_t> moves(2 * res->mvids.size());
+	std::vector<int16_t> moves;
 	moves.insert(moves.begin(), res->mvids.begin(), res->mvids.end());
 	moves.insert(moves.begin() + res->mvids.size(), res->clk.begin(), res->clk.end());
 
-	std::vector<int16_t> timeData(2 * res->timeCtl.size());
+	std::vector<int16_t> timeData;
 	timeData.insert(timeData.begin(), res->timeCtl.begin(), res->timeCtl.end()); 
 	timeData.insert(timeData.begin()+res->timeCtl.size(), res->increment.begin(), res->increment.end()); 
 

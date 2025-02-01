@@ -113,7 +113,7 @@ class MMCDataset(Dataset):
         blocks,
         elo_edges,
         tc_groups,
-        whiten_elos,
+        whiten_params,
         max_nsamp=None,
     ):
         super().__init__()
@@ -127,7 +127,7 @@ class MMCDataset(Dataset):
         self.blocks = blocks
         self.elo_edges = elo_edges
         self.tc_groups = tc_groups
-        self.whiten_elos = whiten_elos
+        self.whiten_params = whiten_params
 
     def __len__(self):
         return self.nsamp
@@ -162,11 +162,12 @@ class MMCDataset(Dataset):
 
         elo_tgt = np.empty(
             n_inp - self.opening_moves,
-            dtype="float32" if self.whiten_elos else "int64",
+            dtype="float32" if self.whiten_params is not None else "int64",
         )
-        if self.whiten_elos:
-            elo_tgt[::2] = welo
-            elo_tgt[1::2] = belo
+        if self.whiten_params is not None:
+            mu, s = self.whiten_params
+            elo_tgt[::2] = (welo - mu) / s
+            elo_tgt[1::2] = (belo - mu) / s
         else:
             elo_tgt[::2] = self._get_group(welo)
             elo_tgt[1::2] = self._get_group(belo)
@@ -253,7 +254,7 @@ class MMCCheatingDataset(Dataset):
         }
 
 
-def load_data(dirname, load_cheatdata=False, gaussian_elo=True):
+def load_data(dirname, load_cheatdata=False):
     with open(f"{dirname}/fmd.json") as f:
         fmd = json.load(f)
     data = {
@@ -263,13 +264,17 @@ def load_data(dirname, load_cheatdata=False, gaussian_elo=True):
             mode="r",
             dtype="int64",
             shape=tuple(fmd["train_shape"]),
-        ),
+        )
+        if fmd["train_shape"][0] > 0
+        else [],
         "val": np.memmap(
             os.path.join(dirname, "val.npy"),
             mode="r",
             dtype="int64",
             shape=tuple(fmd["val_shape"]),
-        ),
+        )
+        if fmd["val_shape"][0] > 0
+        else [],
         "test": np.memmap(
             os.path.join(dirname, "test.npy"),
             mode="r",
@@ -285,19 +290,15 @@ def load_data(dirname, load_cheatdata=False, gaussian_elo=True):
             {
                 "md": md,
                 "welos": np.memmap(
-                    os.path.join(
-                        dn, "whitened_welos.npy" if gaussian_elo else "welos.npy"
-                    ),
+                    os.path.join(dn, "welos.npy"),
                     mode="r",
-                    dtype="float32" if gaussian_elo else "int16",
+                    dtype="int16",
                     shape=md["ngames"],
                 ),
                 "belos": np.memmap(
-                    os.path.join(
-                        dn, "whitened_belos.npy" if gaussian_elo else "belos.npy"
-                    ),
+                    os.path.join(dn, "belos.npy"),
                     mode="r",
-                    dtype="float32" if gaussian_elo else "int16",
+                    dtype="int16",
                     shape=md["ngames"],
                 ),
                 "mvids": np.memmap(
@@ -358,7 +359,7 @@ class MMCDataModule(L.LightningDataModule):
         max_seq_len,
         batch_size,
         num_workers,
-        whiten_elos=True,
+        whiten_params=None,
         load_cheatdata=False,
         max_testsamp=None,
     ):
@@ -371,8 +372,8 @@ class MMCDataModule(L.LightningDataModule):
             self.elo_edges.append(float("inf"))
 
         self.load_cheatdata = load_cheatdata
-        self.whiten_elos = whiten_elos
-        self.__dict__.update(load_data(datadir, load_cheatdata, whiten_elos))
+        self.whiten_params = whiten_params
+        self.__dict__.update(load_data(datadir, load_cheatdata))
         self._init_tc_groups(tc_groups)
         # min_moves is the minimum game length that can be included in the dataset
         # we subtract one here so that it now represents the minimum number of moves that the
@@ -389,7 +390,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.blocks,
                 self.elo_edges,
                 self.tc_groups,
-                self.whiten_elos,
+                self.whiten_params,
             )
             self.valset = MMCDataset(
                 self.max_seq_len,
@@ -398,7 +399,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.blocks,
                 self.elo_edges,
                 self.tc_groups,
-                self.whiten_elos,
+                self.whiten_params,
             )
         if stage == "validate":
             self.valset = MMCDataset(
@@ -408,7 +409,7 @@ class MMCDataModule(L.LightningDataModule):
                 self.blocks,
                 self.elo_edges,
                 self.tc_groups,
-                self.whiten_elos,
+                self.whiten_params,
             )
 
         if stage in ["test", "predict"]:
@@ -430,7 +431,7 @@ class MMCDataModule(L.LightningDataModule):
                     self.blocks,
                     self.elo_edges,
                     self.tc_groups,
-                    self.whiten_elos,
+                    self.whiten_params,
                     self.max_testsamp,
                 )
 

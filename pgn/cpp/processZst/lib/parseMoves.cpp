@@ -9,10 +9,14 @@
 
 using namespace std;
 
-const string MV_PAT = "O-O-O|O-O|[a-hRNBQK]+[0-9=x]*[a-hRNBQK]*[0-9]*[=RNBQ]*";
+const string MV_PAT = "(O-O-O|O-O|[a-hRNBQK]+[0-9=x]*[a-hRNBQK]*[0-9]*[=RNBQ]*)";
 const string CLK_PAT = "\\{.*\\[%clk ([0-9:]+)\\].*\\}";
-const re2::RE2 twoMoves("\\..* (" + MV_PAT + ").*" + CLK_PAT + ".* (" + MV_PAT + ").*" + CLK_PAT);
-const re2::RE2 oneMove("\\..* (" + MV_PAT + ").*" + CLK_PAT);
+const string EVAL_PAT = "(?:\\? \\{.*Mistake.*\\})?";
+const string ALT_LINE_PAT = "(?:\\([0-9]+\\.[0-9a-hRNBQK]*\\))?";
+
+const std::string oneMoveStr = "[0-9]+\\.+ " + MV_PAT + ".*" + EVAL_PAT + ".*" + CLK_PAT + ".*" + ALT_LINE_PAT + ".*";
+const re2::RE2 oneMove(oneMoveStr);
+const re2::RE2 twoMoves(oneMoveStr + oneMoveStr);
 const re2::RE2 twoMovesNoClk("\\..* (" + MV_PAT + ").* (" + MV_PAT + ").*");
 const re2::RE2 oneMoveNoClk("\\.* (" + MV_PAT + ").*");
 
@@ -20,14 +24,37 @@ string movenoToStr(int moveno) {
 	return to_string(moveno) + ". ";
 }
 
-tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv, bool requireClk) {
+std::string nextMoveStr(std::string& moveStr, int& idx, int curmv) {
 	int mvstart = idx;
 	string nextmv = movenoToStr(curmv+1);
-	while(idx < moveStr.size() && moveStr.substr(idx, nextmv.size()) != nextmv) {
+
+	bool inParens = false;
+	bool inBracket = false;
+	while(idx < moveStr.size()) {
+		if (inParens) {
+			while (moveStr[idx] != ')') idx++;
+			inParens = false;
+		} else if (inBracket) {
+			while (moveStr[idx] != '}') idx++;
+			inBracket = false;
+		} else if (moveStr[idx] == '(') {
+			inParens = true;
+		} else if (moveStr[idx] == '{') {
+			inBracket = true;
+		} else if (moveStr.substr(idx, nextmv.size()) == nextmv) {
+			break;
+		}
 		idx++;
 	}
+
 	string wm, wclk, bm, bclk;
 	string ss = moveStr.substr(mvstart, idx-mvstart);
+	return ss;
+}
+
+tuple<int, vector<string> > matchNextMove(string& moveStr, int idx, int curmv, bool requireClk) {
+	string ss = nextMoveStr(moveStr, idx, curmv);
+	string wm, wclk, bm, bclk;
 
 	profiler.start("regex");
 	bool found1=false, found2noclk=false, found1noclk=false;
@@ -61,7 +88,6 @@ int clkToSec(string timeStr) {
 	int s = stoi(timeStr.substr(5, 2));
 	return (int16_t)(m * 60 + s);
 }
-
 
 tuple<vector<int16_t>, vector<int16_t> > parseMoves(string moveStr, bool requireClk) {
 	vector<int16_t> mvids;

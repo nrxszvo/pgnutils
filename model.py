@@ -255,8 +255,8 @@ class Transformer(nn.Module):
             bs, seqlen, dim = h.shape
             h = (
                 h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
+                .squeeze(1)
                 .permute(0, 2, 1, 3)
-                .squeeze()
             )
             if self.params.guassian_elo:
                 # make sure variance is non-negative
@@ -272,8 +272,8 @@ class Transformer(nn.Module):
             bs, seqlen, dim = h.shape
             h = (
                 h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
+                .squeeze(1)
                 .permute(0, 2, 1, 3)
-                .squeeze()
             )
             return h
         else:

@@ -1,5 +1,6 @@
 import os
 from functools import partial
+import json
 
 import numpy as np
 import torch
@@ -36,6 +37,12 @@ def init_modules(
         else:
             raise Exception("did not recognize loss function name")
 
+    whiten_params = None
+    if model_args.gaussian_elo:
+        with open(f"{cfgyml.datadir}/fmd.json") as f:
+            fmd = json.load(f)
+        whiten_params = (fmd["elo_mean"], fmd["elo_std"])
+
     dm = MMCDataModule(
         datadir=datadir,
         elo_edges=cfgyml.elo_edges,
@@ -43,7 +50,7 @@ def init_modules(
         max_seq_len=model_args.max_seq_len,
         batch_size=cfgyml.batch_size,
         num_workers=n_workers,
-        whiten_elos=model_args.gaussian_elo,
+        whiten_params=whiten_params,
         max_testsamp=n_samp,
     )
     model_args.n_timecontrol_heads = dm.n_tc_groups
@@ -51,6 +58,7 @@ def init_modules(
         name=name,
         outdir=outdir,
         elo_loss=cfgyml.elo_loss,
+        whiten_params=whiten_params,
         elo_loss_weight=cfgyml.elo_loss_weight,
         model_args=model_args,
         opening_moves=dm.opening_moves,

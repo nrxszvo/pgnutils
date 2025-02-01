@@ -444,7 +444,8 @@ int main(int argc, char *argv[]) {
 	args.eloEdges.push_back(INT_MAX);
 	args.npydirs = getBlockDirs(absl::GetFlag(FLAGS_npydir));
 	args.nThreadsPerBlock = absl::GetFlag(FLAGS_nThreadsPerBlock);
-	args.minMoves = absl::GetFlag(FLAGS_minTime);
+	args.minMoves = absl::GetFlag(FLAGS_minMoves);
+	args.minTime = absl::GetFlag(FLAGS_minTime);
 	args.outdir = absl::GetFlag(FLAGS_outdir);
 	args.trainp = absl::GetFlag(FLAGS_trainp);
 	args.testp = absl::GetFlag(FLAGS_testp);

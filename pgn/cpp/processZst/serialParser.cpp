@@ -9,7 +9,8 @@
 
 std::shared_ptr<ParserOutput> processSerial(std::string zst) {
 
-	DecompressStream decompressor(zst,0,0);
+	std::vector<size_t> frameBoundaries = getFrameBoundaries(zst, 1);
+	DecompressStream decompressor(zst,0,frameBoundaries[1]);
 	PgnProcessor processor(300, 10800, 60);
 
 	int gamestart = 0;
@@ -49,8 +50,10 @@ std::shared_ptr<ParserOutput> processSerial(std::string zst) {
 					}
 					throw std::runtime_error("evaluation failed");
 				}
-				output->welos.push_back((short)processor.getWelo());
-				output->belos.push_back((short)processor.getBelo());
+				output->welos.push_back(processor.getWelo());
+				output->belos.push_back(processor.getBelo());
+				output->timeCtl.push_back(processor.getTime());
+				output->increment.push_back(processor.getInc());
 				output->gamestarts.push_back(output->mvids.size());
 				output->mvids.insert(output->mvids.end(), moves.begin(), moves.end());
 				output->clk.insert(output->clk.end(), clk.begin(), clk.end());

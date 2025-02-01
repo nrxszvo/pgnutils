@@ -24,6 +24,7 @@ class MMCModuleArgs:
     name: str
     outdir: str
     elo_loss: str
+    whiten_params: tuple[float, float]
     elo_loss_weight: float
     model_args: ModelArgs
     opening_moves: int
@@ -49,6 +50,7 @@ class MimicChessModule(L.LightningModule):
         self.val_check_steps = params.val_check_steps
         self.max_steps = params.max_steps
         self.move_loss = F.cross_entropy
+        self.whiten_params = params.whiten_params
 
         if params.name:
             logger = TensorBoardLogger(".", name="L", version=params.name)
@@ -174,7 +176,7 @@ class MimicChessModule(L.LightningModule):
             tc_groups = batch["tc_groups"]
             bs, seqlen, ntc, nelo = pred.shape
             index = tc_groups[:, None, None, None].expand([bs, seqlen, 1, nelo])
-            pred = torch.gather(pred, 2, index).squeeze()
+            pred = torch.gather(pred, 2, index).squeeze(2)
             pred = pred.permute(0, 2, 1)
         return pred[:, :, self.opening_moves - 1 :]
 
@@ -227,7 +229,7 @@ class MimicChessModule(L.LightningModule):
         if self.params.elo_loss == "gaussian_nll" and not self._var_is_warming():
             self.log(
                 "train_avg_std",
-                self._get_avg_std(elo_pred, batch["elo_target"]),
+                self._get_avg_std(elo_pred, batch["elo_target"])[0],
                 sync_dist=True,
             )
 
@@ -252,7 +254,7 @@ class MimicChessModule(L.LightningModule):
         if self.params.elo_loss == "gaussian_nll" and not self._var_is_warming():
             self.log(
                 "valid_avg_std",
-                self._get_avg_std(elo_pred, batch["elo_target"]),
+                self._get_avg_std(elo_pred, batch["elo_target"])[0],
                 sync_dist=True,
             )
         return valid_loss
@@ -281,7 +283,7 @@ class MimicChessModule(L.LightningModule):
         u_std_preds = (elo_pred[:, 1] ** 0.5) * std
         u_std_preds[tgts == NOOP] = 0
         avg_std = u_std_preds.sum() / npred
-        return avg_std
+        return avg_std, u_std_preds
 
     def predict_step(self, batch, batch_idx):
         move_pred, elo_pred = self(batch["input"])
@@ -357,11 +359,12 @@ class MimicChessModule(L.LightningModule):
                 npred = (tgts != NOOP).sum()
 
                 u_loc_preds = (elo_pred[:, 0] * std) + mean
+                u_loc_preds[tgts == NOOP] = 0
                 loc_err = (utgts - u_loc_preds).abs()
                 loc_err[tgts == NOOP] = 0
                 loc_err = loc_err.sum() / npred
 
-                avg_std = self._get_avg_std(elo_pred, tgts)
+                avg_std, u_std_preds = self._get_avg_std(elo_pred, tgts)
 
                 m = Normal(elo_pred[:, 0], elo_pred[:, 1].clamp(min=1e-6))
                 cdf_score = 1 - 2 * (m.cdf(tgts) - 0.5).abs()
@@ -377,18 +380,24 @@ class MimicChessModule(L.LightningModule):
                     "loss": elo_loss.item(),
                     "location_error": loc_err,
                     "average_std": avg_std,
+                    "elo_mean": u_loc_preds,
+                    "elo_std": u_std_preds,
                 }
             )
 
         return move_data, elo_data
 
     def fit(self, datamodule, ckpt=None):
-        self.whiten_params = (datamodule.fmd["elo_mean"], datamodule.fmd["elo_std"])
         self.trainer.fit(self, datamodule=datamodule, ckpt_path=ckpt)
 
     def predict(self, datamodule):
         tkargs = self.trainer_kwargs
         trainer = L.Trainer(**tkargs)
-        self.whiten_params = (datamodule.fmd["elo_mean"], datamodule.fmd["elo_std"])
+        outputs = trainer.predict(self, datamodule)
+        return outputs
+
+    def predict_elo(self, datamodule):
+        trainer = L.Trainer(**self.trainer_kwargs)
+        self.predict_step = self.predict_elo_step
         outputs = trainer.predict(self, datamodule)
         return outputs

@@ -3,6 +3,7 @@
 __pycache__/
 .cache/
 compile_commands.json
+build/
 debug/
 release/
 *.zst
@@ -10,5 +11,10 @@ release/
 *.npy
 L/
 .clangd
+trained_models/
 processZst
+!processZst/
 resizeMMap
+!resizeMMap/
+filterData
+!filterData/

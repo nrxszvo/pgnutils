@@ -47,14 +47,15 @@ std::shared_ptr<GameMD> MMCRawDataReader::nextGame(std::vector<int16_t>& clkVec)
 
 	while (true) {
 		gsIf.read((char*)&gameEnd, sizeof(gameEnd));
-		if (gameEnd == 0) throw std::runtime_error("gameEnd is 0");
 		if (gsIf.gcount() <= 0) {
 			int64_t pos = clkIf.tellg();
 			clkIf.seekg(0, clkIf.end);
 			int64_t rem = clkIf.tellg() - pos;
 			clkIf.seekg(pos, clkIf.beg);
-			gameSize = rem/sizeof(int64_t);
+			gameSize = rem/sizeof(int16_t);
 			if (nGames != totalGames-1) throw std::runtime_error("permaturely reached eof (nGames=" + std::to_string(nGames) + ", total games=" + std::to_string(totalGames) + ") in " + npydir);
+		} else if (gameEnd == 0) {
+			throw std::runtime_error("gameEnd is 0");
 		} else {
 			gameSize = gameEnd-gameStart;
 		}
