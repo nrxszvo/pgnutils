@@ -22,7 +22,7 @@ namespace fs = std::filesystem;
 
 ABSL_FLAG(std::string, npydir, "", "directory containing block folders of npy raw data files");
 ABSL_FLAG(int, minMoves, 11, "minimum number of game moves to be included in filtered dataset");
-ABSL_FLAG(int, minTime, 30, "minimum time remaining to be included in filtered dataset");
+ABSL_FLAG(float, minTimeP, 0.05, "Percentage of initial time remaining for moves to be included in filtered dataset");
 ABSL_FLAG(std::string, outdir, "", "output directory for writing memmap files");
 ABSL_FLAG(float, trainp, 0.9, "percentage of dataset for training");
 ABSL_FLAG(float, testp, 0.08, "percentage of dataset for testing");
@@ -183,7 +183,7 @@ auto getEloBin(int elo, std::vector<int>& eloEdges) {
 
 class BlockProcessor {
 	int minMoves;
-	int minTime;
+	float minTimeP;
 	int maxGames;
 	int leniency;
 	std::vector<int> eloEdges;
@@ -198,14 +198,14 @@ public:
 		int nBlocks;
 		int nThreadsPerBlock;
 		int minMoves;
-		int minTime;
+		float minTimeP;
 		int maxGames;
 		int maxGamesLeniency;
 		std::vector<int> eloEdges;
 		std::shared_ptr<SplitManager> splitMgr;
 	};
 	BlockProcessor(Args& args)
-		: minMoves(args.minMoves), minTime(args.minTime), maxGames(args.maxGames), leniency(args.maxGamesLeniency), eloEdges(args.eloEdges), splitMgr(args.splitMgr) 
+		: minMoves(args.minMoves), minTimeP(args.minTimeP), maxGames(args.maxGames), leniency(args.maxGamesLeniency), eloEdges(args.eloEdges), splitMgr(args.splitMgr) 
 	{
 		eloHist = std::vector(eloEdges.size(), std::vector(eloEdges.size(), 0));
 		blockGames = std::vector<int64_t>(args.nBlocks*std::max(1, args.nThreadsPerBlock), 0);
@@ -268,10 +268,13 @@ public:
 			int bbin = getEloBin(md->belo, eloEdges);
 			if (maxGames > 0 && eloHist[wbin][bbin] >= maxGames) continue;
 
-			int idx = clk.size()-1;	
-			while (idx >= minMoves && clk[idx] < minTime && clk[idx-1] < minTime) idx--;
+			int minTime = std::max(0, static_cast<int>(minTimeP*(md->timeCtl - 10*md->inc)));
+			int nMoves;
+			for (nMoves = 1; nMoves < clk.size(); nMoves++) {
+				if (clk[nMoves] < minTime) break;
+			}
 
-			if (idx >= minMoves) {
+			if (nMoves >= minMoves) {
 				localEloHist[wbin][bbin]++;
 				localTCHist[md->timeCtl][md->inc]++;
 				if (maxGames > 0 && blockGames[threadId] % leniency == 0) {
@@ -288,7 +291,7 @@ public:
 						}
 					}
 				}
-				splitMgr->insertCoords(threadId, blockId, md, idx+1);
+				splitMgr->insertCoords(threadId, blockId, md, nMoves);
 			}
 		}
 	}
@@ -298,7 +301,7 @@ struct FDArgs {
 	std::vector<std::string> npydirs;
 	int nThreadsPerBlock;
 	int minMoves;
-	int minTime;
+	float minTimeP;
 	std::string outdir;
 	float trainp;
 	float testp;
@@ -335,7 +338,7 @@ std::shared_ptr<BlockProcessor> initBlockProcessor(FDArgs &args, std::shared_ptr
 	bpArgs.nBlocks = args.npydirs.size();
 	bpArgs.nThreadsPerBlock = args.nThreadsPerBlock;
 	bpArgs.minMoves = args.minMoves;
-	bpArgs.minTime = args.minTime;
+	bpArgs.minTimeP = args.minTimeP;
 	bpArgs.maxGames = args.maxGames;
 	bpArgs.maxGamesLeniency = args.maxGamesLeniency;
 	bpArgs.eloEdges = args.eloEdges;
@@ -445,7 +448,7 @@ int main(int argc, char *argv[]) {
 	args.npydirs = getBlockDirs(absl::GetFlag(FLAGS_npydir));
 	args.nThreadsPerBlock = absl::GetFlag(FLAGS_nThreadsPerBlock);
 	args.minMoves = absl::GetFlag(FLAGS_minMoves);
-	args.minTime = absl::GetFlag(FLAGS_minTime);
+	args.minTimeP = absl::GetFlag(FLAGS_minTimeP);
 	args.outdir = absl::GetFlag(FLAGS_outdir);
 	args.trainp = absl::GetFlag(FLAGS_trainp);
 	args.testp = absl::GetFlag(FLAGS_testp);
