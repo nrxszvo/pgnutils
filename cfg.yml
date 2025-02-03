@@ -1,9 +1,12 @@
 datadir: datasets/lichess_180_10800_60_122024_v2/split_31_30_1m_900208
-predict_elo: True
-elo_loss: gaussian_nll
-initial_var: 1.e-1
-elo_loss_weight: 1
-elo_edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
+elo_params:
+  predict: True
+  loss: gaussian_nll
+  initial_var: 1.e-1
+  warmup_var_steps: 25000
+  warmup_elo_steps: 25000
+  weight: 1
+  edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
 tc_groups: 
  180: [0,1000]
  300: [0,1000]

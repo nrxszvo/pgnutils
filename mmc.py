@@ -23,9 +23,7 @@ from mmcdataset import NOOP
 class MMCModuleArgs:
     name: str
     outdir: str
-    elo_loss: str
-    whiten_params: tuple[float, float]
-    elo_loss_weight: float
+    elo_params: Dict
     model_args: ModelArgs
     opening_moves: int
     lr_scheduler_params: Dict
@@ -34,8 +32,6 @@ class MMCModuleArgs:
     random_seed: Optional[int]
     strategy: Optional[str]
     devices: Optional[int]
-    initial_var: Optional[int]
-    constant_var: Optional[bool]
 
 
 class MimicChessModule(L.LightningModule):
@@ -50,8 +46,7 @@ class MimicChessModule(L.LightningModule):
         self.val_check_steps = params.val_check_steps
         self.max_steps = params.max_steps
         self.move_loss = F.cross_entropy
-        self.whiten_params = params.whiten_params
-
+        self.elo_params = params.elo_params
         if params.name:
             logger = TensorBoardLogger(".", name="L", version=params.name)
         else:
@@ -187,27 +182,36 @@ class MimicChessModule(L.LightningModule):
         if move_pred is not None:
             move_loss = self._get_move_loss(move_pred, batch)
             loss += move_loss
-        if elo_pred is not None:
+        if elo_pred is not None and self._get_elo_warmup_stage() != "WARMUP_ELO":
             elo_loss, elo_pred = self._get_elo_loss(elo_pred, batch)
-            loss += self.params.elo_loss_weight * elo_loss
+            loss += self.elo_params["weight"] * elo_loss
 
         return loss, move_loss, elo_loss, elo_pred
 
-    def _var_is_warming(self):
-        return (
-            self.params.constant_var
-            or self.global_step < self.lr_scheduler_params["warmup_steps"]
-        )
+    def _get_elo_warmup_stage(self):
+        if self.elo_params["constant_var"]:
+            return "COMPLETE"
+        else:
+            if self.global_step < self.elo_params["warmup_elo_steps"]:
+                return "WARMUP_ELO"
+            elif (
+                self.global_step
+                < self.elo_params["warmup_elo_steps"]
+                + self.elo_params["warmup_var_steps"]
+            ):
+                return "WARMUP_VAR"
+            else:
+                return "COMPLETE"
 
     def _get_elo_loss(self, elo_pred, batch):
         elo_pred = self._chomp_pred(elo_pred, batch)
-        if self.params.elo_loss == "cross_entropy":
+        if self.elo_params["loss"] == "cross_entropy":
             loss = F.cross_entropy(elo_pred, batch["elo_target"], ignore_index=NOOP)
-        elif self.params.elo_loss == "gaussian_nll":
+        elif self.elo_params["loss"] == "gaussian_nll":
             exp = elo_pred[:, 0]
             var = elo_pred[:, 1]
-            if self._var_is_warming():
-                var = torch.ones_like(var) * self.params.initial_var
+            if self._get_elo_warmup_stage() == "WARMUP_VAR":
+                var = torch.ones_like(var) * self.elo_params["initial_var"]
 
             exp[batch["elo_target"] == NOOP] = NOOP
             var[batch["elo_target"] == NOOP] = 0
@@ -226,7 +230,10 @@ class MimicChessModule(L.LightningModule):
             self.log("train_move_loss", move_loss, sync_dist=True)
         if elo_loss is not None:
             self.log("train_elo_loss", elo_loss, sync_dist=True)
-        if self.params.elo_loss == "gaussian_nll" and not self._var_is_warming():
+        if (
+            self.elo_params["loss"] == "gaussian_nll"
+            and self._get_elo_warmup_stage() == "COMPLETE"
+        ):
             self.log(
                 "train_avg_std",
                 self._get_avg_std(elo_pred, batch["elo_target"])[0],
@@ -251,7 +258,10 @@ class MimicChessModule(L.LightningModule):
             self.log("valid_move_loss", move_loss, sync_dist=True)
         if elo_loss is not None:
             self.log("valid_elo_loss", elo_loss, sync_dist=True)
-        if self.params.elo_loss == "gaussian_nll" and not self._var_is_warming():
+        if (
+            self.elo_params["loss"] == "gaussian_nll"
+            and self._get_elo_warmup_stage() == "COMPLETE"
+        ):
             self.log(
                 "valid_avg_std",
                 self._get_avg_std(elo_pred, batch["elo_target"])[0],
@@ -278,7 +288,7 @@ class MimicChessModule(L.LightningModule):
         return next_token
 
     def _get_avg_std(self, elo_pred, tgts):
-        mean, std = self.whiten_params
+        mean, std = self.elo_params["whiten_params"]
         npred = (tgts != NOOP).sum()
         u_std_preds = (elo_pred[:, 1] ** 0.5) * std
         u_std_preds[tgts == NOOP] = 0
@@ -323,7 +333,7 @@ class MimicChessModule(L.LightningModule):
         if elo_pred is not None:
             sprobs = None
             sgrps = None
-            if self.params.elo_loss == "cross_entropy":
+            if self.elo_params["loss"] == "cross_entropy":
                 probs = torch.softmax(elo_pred, dim=1)
                 sprobs, sgrps = torch.sort(probs, dim=1, descending=True)
                 sprobs = sprobs[:, :5]
@@ -339,7 +349,7 @@ class MimicChessModule(L.LightningModule):
             cdf_score = None
             loc_err = None
             avg_std = None
-            if self.params.elo_loss == "cross_entropy":
+            if self.elo_params["loss"] == "cross_entropy":
                 tprobs = torch.empty_like(probs)
                 adjprobs = torch.empty_like(probs)
                 for i, tgt in enumerate([wtgt, btgt]):
@@ -352,8 +362,8 @@ class MimicChessModule(L.LightningModule):
                     adjprobs[:, :, i::2] = probs[:, :, i::2] * (mask + lo + hi)
                 tprobs = tprobs.sum(dim=1)
                 adjprobs = adjprobs.sum(dim=1)
-            elif self.params.elo_loss == "gaussian_nll":
-                mean, std = self.whiten_params
+            elif self.elo_params["loss"] == "gaussian_nll":
+                mean, std = self.elo_params["whiten_params"]
                 utgts = (tgts * std) + mean
 
                 npred = (tgts != NOOP).sum()
