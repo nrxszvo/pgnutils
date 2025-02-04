@@ -226,10 +226,13 @@ class Transformer(nn.Module):
             self.preproc = nn.Linear(
                 params.dim, params.n_timecontrol_heads * params.dim, bias=False
             )
+
         if params.elo_pred_size > 0:
+            self.elo_norm = RMSNorm(params.dim, eps=params.norm_eps)
             self.elo_output = nn.Linear(params.dim, params.elo_pred_size, bias=False)
 
         if params.predict_move:
+            self.move_norm = RMSNorm(params.dim, eps=params.norm_eps)
             self.move_output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
@@ -249,18 +252,23 @@ class Transformer(nn.Module):
             )
         return h
 
+    def _reshape_timecontrol(self, h):
+        bs, seqlen, dim = h.shape
+        h = (
+            h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
+            .squeeze(1)
+            .permute(0, 2, 1, 3)
+        )
+        return h
+
     def _get_elo_pred(self, h: torch.Tensor):
         if self.params.elo_pred_size > 0:
+            h = self.elo_norm(h)
             h = self.elo_output(h).float()
-            bs, seqlen, dim = h.shape
-            h = (
-                h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
-                .squeeze(1)
-                .permute(0, 2, 1, 3)
-            )
+            h = self._reshape_timecontrol(h)
             if self.params.guassian_elo:
                 # make sure variance is non-negative
-                h[:, :, :, 1] = h[:, :, :, 1].exp()
+                h[:, :, :, 1] = torch.exp(h[:, :, :, 1]) * torch.sigmoid(h[:, :, :, 1])
 
             return h
         else:
@@ -268,13 +276,9 @@ class Transformer(nn.Module):
 
     def _get_move_pred(self, h: torch.Tensor):
         if self.params.predict_move:
+            h = self.move_norm(h)
             h = self.move_output(h).float()
-            bs, seqlen, dim = h.shape
-            h = (
-                h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
-                .squeeze(1)
-                .permute(0, 2, 1, 3)
-            )
+            h = self._reshape_timecontrol(h)
             return h
         else:
             return None
