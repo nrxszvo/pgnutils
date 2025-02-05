@@ -190,12 +190,13 @@ class MimicChessModule(L.LightningModule):
 
     def _get_elo_warmup_stage(self):
         if self.elo_params["constant_var"]:
-            return "COMPLETE"
+            return "WARMUP_VAR"
         else:
             if self.global_step < self.elo_params["warmup_elo_steps"]:
                 return "WARMUP_ELO"
             elif (
-                self.global_step
+                self.elo_params["loss"] == "gaussian_nll"
+                and self.global_step
                 < self.elo_params["warmup_elo_steps"]
                 + self.elo_params["warmup_var_steps"]
             ):
@@ -216,6 +217,9 @@ class MimicChessModule(L.LightningModule):
             exp[batch["elo_target"] == NOOP] = NOOP
             var[batch["elo_target"] == NOOP] = 0
             loss = F.gaussian_nll_loss(exp, batch["elo_target"], var)
+        elif self.elo_params["loss"] == "mse":
+            loss = F.mse_loss(elo_pred.squeeze(1), batch["elo_target"])
+
         return loss, elo_pred
 
     def _get_move_loss(self, move_pred, batch):
@@ -362,7 +366,7 @@ class MimicChessModule(L.LightningModule):
                     adjprobs[:, :, i::2] = probs[:, :, i::2] * (mask + lo + hi)
                 tprobs = tprobs.sum(dim=1)
                 adjprobs = adjprobs.sum(dim=1)
-            elif self.elo_params["loss"] == "gaussian_nll":
+            elif self.elo_params["loss"] in ["gaussian_nll", "mse"]:
                 mean, std = self.elo_params["whiten_params"]
                 utgts = (tgts * std) + mean
 
@@ -374,10 +378,11 @@ class MimicChessModule(L.LightningModule):
                 loc_err[tgts == NOOP] = 0
                 loc_err = loc_err.sum() / npred
 
-                avg_std, u_std_preds = self._get_avg_std(elo_pred, tgts)
+                if self.elo_params["loss"] == "gaussian_nll":
+                    avg_std, u_std_preds = self._get_avg_std(elo_pred, tgts)
 
-                m = Normal(elo_pred[:, 0], elo_pred[:, 1].clamp(min=1e-6))
-                cdf_score = 1 - 2 * (m.cdf(tgts) - 0.5).abs()
+                    m = Normal(elo_pred[:, 0], elo_pred[:, 1].clamp(min=1e-6))
+                    cdf_score = 1 - 2 * (m.cdf(tgts) - 0.5).abs()
 
             elo_data = to_numpy(
                 {

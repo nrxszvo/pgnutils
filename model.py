@@ -19,7 +19,7 @@ class ModelArgs:
     vocab_size: int = 2048
     predict_move: bool = True
     elo_pred_size: int = 10
-    guassian_elo: bool = True
+    gaussian_elo: bool = False
     n_timecontrol_heads: int = 1
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
@@ -266,7 +266,7 @@ class Transformer(nn.Module):
             h = self.elo_norm(h)
             h = self.elo_output(h).float()
             h = self._reshape_timecontrol(h)
-            if self.params.guassian_elo:
+            if self.params.gaussian_elo:
                 # make sure variance is non-negative
                 h[:, :, :, 1] = torch.exp(h[:, :, :, 1]) * torch.sigmoid(h[:, :, :, 1])
 

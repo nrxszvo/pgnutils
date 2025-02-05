@@ -1,10 +1,9 @@
-datadir: datasets/lichess_180_10800_60_122024_v2/split_31_30_1m_900208
+datadir: datasets/lichess_180_10800_60_122024_v2/split_11_5_1m_900208
 elo_params:
   predict: True
-  loss: gaussian_nll
-  initial_var: 1.e-1
-  warmup_elo_steps: 25000
-  warmup_var_steps: 25000
+  loss: mse
+  initial_var: 1
+  warmup_elo_steps: 0
   weight: 1
   edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
 tc_groups: 
@@ -15,7 +14,7 @@ tc_groups:
  10800: [1000]
 model_args:
   predict_move: True
-  dim: 1024 
+  dim: 2048 
   n_layers: 16 
   n_heads: 32
   n_kv_heads: 8 
@@ -30,8 +29,8 @@ lr_scheduler_params:
   name: "WarmUpCosine"
   min_lr: 3.e-6
   warmup_steps: 25000
-batch_size: 256
-max_steps: 4.e+5 
+batch_size: 128
+max_steps: 2.e+5 
 val_check_steps: 25000
-strategy: ddp 
+strategy: ddp
 random_seed: 0

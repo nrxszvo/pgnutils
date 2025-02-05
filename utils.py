@@ -34,11 +34,13 @@ def init_modules(
             model_args.elo_pred_size = len(cfgyml.elo_params["edges"]) + 1
         elif cfgyml.elo_params["loss"] == "gaussian_nll":
             model_args.elo_pred_size = 2
+        elif cfgyml.elo_params["loss"] == "mse":
+            model_args.elo_pred_size = 1
         else:
             raise Exception("did not recognize loss function name")
 
     whiten_params = None
-    if model_args.gaussian_elo:
+    if cfgyml.elo_params["loss"] in ["gaussian_nll", "mse"]:
         with open(f"{cfgyml.datadir}/fmd.json") as f:
             fmd = json.load(f)
         whiten_params = (fmd["elo_mean"], fmd["elo_std"])
