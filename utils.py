@@ -12,6 +12,24 @@ from model import ModelArgs
 from pgn.py.lib.reconstruct import count_invalid
 
 
+def get_model_args(cfgyml):
+    model_args = ModelArgs(cfgyml.model_args)
+    if cfgyml.elo_params["predict"]:
+        model_args.gaussian_elo = cfgyml.elo_params["loss"] == "gaussian_nll"
+        if cfgyml.elo_params["loss"] == "cross_entropy":
+            model_args.elo_pred_size = len(cfgyml.elo_params["edges"]) + 1
+        elif cfgyml.elo_params["loss"] == "gaussian_nll":
+            model_args.elo_pred_size = 2
+        elif cfgyml.elo_params["loss"] == "mse":
+            model_args.elo_pred_size = 1
+        else:
+            raise Exception("did not recognize loss function name")
+    model_args.n_timecontrol_heads = len(
+        [n for _, grp in cfgyml.tc_groups.items() for n in grp]
+    )
+    return model_args
+
+
 def init_modules(
     cfgyml,
     name,
@@ -27,17 +45,7 @@ def init_modules(
     if n_workers is None:
         n_workers = os.cpu_count() // devices if torch.cuda.is_available() else 0
     datadir = cfgyml.datadir if alt_datadir is None else alt_datadir
-    model_args = ModelArgs(cfgyml.model_args)
-    if cfgyml.elo_params["predict"]:
-        model_args.gaussian_elo = cfgyml.elo_params["loss"] == "gaussian_nll"
-        if cfgyml.elo_params["loss"] == "cross_entropy":
-            model_args.elo_pred_size = len(cfgyml.elo_params["edges"]) + 1
-        elif cfgyml.elo_params["loss"] == "gaussian_nll":
-            model_args.elo_pred_size = 2
-        elif cfgyml.elo_params["loss"] == "mse":
-            model_args.elo_pred_size = 1
-        else:
-            raise Exception("did not recognize loss function name")
+    model_args = get_model_args(cfgyml)
 
     whiten_params = None
     if cfgyml.elo_params["loss"] in ["gaussian_nll", "mse"]:
@@ -56,7 +64,6 @@ def init_modules(
         whiten_params=whiten_params,
         max_testsamp=n_samp,
     )
-    model_args.n_timecontrol_heads = dm.n_tc_groups
     cfgyml.elo_params["constant_var"] = constant_var
 
     module_args = MMCModuleArgs(

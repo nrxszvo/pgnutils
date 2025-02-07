@@ -87,6 +87,50 @@ def uci_to_mvid(uci, white, black):
     return mvid
 
 
+class IllegalMoveException(Exception):
+    pass
+
+
+def is_null(uci):
+    half = int(len(uci) / 2)
+    return uci[:half] == uci[half:]
+
+
+class BoardState:
+    def __init__(self):
+        self.state, self.white, self.black = inf.board_state()
+        self.board = chess.pgn.Game().board()
+
+    def uci_to_mvid(self, uci):
+        return uci_to_mvid(uci, self.white, self.black)
+
+    def print(self):
+        line = "\n"
+        for rank in reversed(self.state):
+            for piece in rank:
+                if piece is None or piece.captured:
+                    line += "  "
+                else:
+                    line += piece.name.rjust(2)
+            line += "\n"
+        return line
+
+    def update(self, mvid):
+        uci = mvid_to_uci(mvid, self.state, self.white, self.black, False)
+        if is_null(uci):
+            raise IllegalMoveException(f"{uci} is null")
+        else:
+            mv = chess.Move.from_uci(uci)
+            if self.board.is_legal(mv):
+                mvid_to_uci(mvid, self.state, self.white, self.black)
+                self.board.push(mv)
+            else:
+                raise IllegalMoveException(
+                    f"illegal move {uci} for board:\n{self.board}"
+                )
+            return mv
+
+
 def count_invalid(mvids, opening, tgts):
     board_state, white, black = inf.board_state()
     board = chess.pgn.Game().board()
