@@ -63,6 +63,7 @@ def init_modules(
         num_workers=n_workers,
         whiten_params=whiten_params,
         max_testsamp=n_samp,
+        opening_moves=cfgyml.opening_moves,
     )
     cfgyml.elo_params["constant_var"] = constant_var
 

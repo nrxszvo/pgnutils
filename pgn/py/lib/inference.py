@@ -158,6 +158,7 @@ QCASTLEW = KBISHOP * 64
 QCASTLEB = (16 + KBISHOP) * 64 + 56
 
 NOOP = QBISHOP * 64 + 3
+STARTMV = KBISHOP * 64 + 4
 
 
 def castle_to_mvid(mvdata, board, state):

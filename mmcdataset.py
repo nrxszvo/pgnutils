@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import lightning as L
 import json
-from pgn import NOOP
+from pgn import NOOP, STARTMV
 from collections import OrderedDict
 
 
@@ -153,15 +153,16 @@ class MMCDataset(Dataset):
         timectl = self.blocks[blk]["timectl"][gidx]
         inc = self.blocks[blk]["increment"][gidx]
 
-        n_inp = min(self.seq_len, nmoves)
-        inp = np.empty(n_inp - 1, dtype="int32")
-        inp[:] = mvids[gs : gs + n_inp - 1]
+        nmoves = min(self.seq_len, nmoves)
+        inp = np.empty(nmoves, dtype="int32")
+        inp[0] = STARTMV
+        inp[1:] = mvids[gs : gs + nmoves - 1]
 
         opening = np.empty(self.opening_moves, dtype="int64")
         opening[:] = mvids[gs : gs + self.opening_moves]
 
         elo_tgt = np.empty(
-            n_inp - self.opening_moves,
+            nmoves - self.opening_moves,
             dtype="float32" if self.whiten_params is not None else "int64",
         )
         if self.whiten_params is not None:
@@ -172,8 +173,8 @@ class MMCDataset(Dataset):
             elo_tgt[::2] = self._get_group(welo)
             elo_tgt[1::2] = self._get_group(belo)
 
-        mv_tgt = np.empty(n_inp - self.opening_moves, dtype="int64")
-        mv_tgt[:] = mvids[gs + self.opening_moves : gs + n_inp]
+        mv_tgt = np.empty(nmoves - self.opening_moves, dtype="int64")
+        mv_tgt[:] = mvids[gs + self.opening_moves : gs + nmoves]
 
         tc_id = self._get_tc_id(timectl, inc)
 
@@ -182,7 +183,7 @@ class MMCDataset(Dataset):
             "elo_target": elo_tgt,
             "move_target": mv_tgt,
             "opening": opening,
-            "n_inp": n_inp,
+            "nmoves": nmoves,
             "tc_id": tc_id,
         }
 
@@ -362,6 +363,7 @@ class MMCDataModule(L.LightningDataModule):
         whiten_params=None,
         load_cheatdata=False,
         max_testsamp=None,
+        opening_moves=None,
     ):
         super().__init__()
         self.max_seq_len = max_seq_len
@@ -378,7 +380,11 @@ class MMCDataModule(L.LightningDataModule):
         # min_moves is the minimum game length that can be included in the dataset
         # we subtract one here so that it now represents the minimum number of moves that the
         # model must see before making its first prediction
-        self.opening_moves = self.fmd["min_moves"] - 1
+        if opening_moves is None:
+            self.opening_moves = self.fmd["min_moves"] - 1
+        else:
+            self.opening_moves = opening_moves
+
         self.max_testsamp = max_testsamp
 
     def setup(self, stage):
