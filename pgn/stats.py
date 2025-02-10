@@ -29,7 +29,7 @@ def elo_matrix(
     welos,
     belos,
     plot=False,
-    edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600],
+    edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 4000],
     spacing=12,
 ):
     maxelo = max(welos.max(), belos.max())
@@ -55,7 +55,7 @@ def elo_hist(
     welos,
     belos,
     plot=False,
-    edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, float("inf")],
+    edges=[0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 4000],
 ):
     max_elo = max(welos.max(), belos.max())
     hw, es = np.histogram(welos, edges)
@@ -95,17 +95,40 @@ def elo_hist(
         plt.savefig("elos.png", dpi=500)
 
 
-def time_hist(blocks, edges=[180, 300, 600, 900, 1800, float("inf")]):
-    all_hs = None
-    for blk in blocks:
-        start_times = blk["clk"][blk["gs"]]
-        hs, es = np.histogram(start_times, edges)
-        if all_hs is None:
-            all_hs = hs
+def time_hist(blocks, edges=[0, 181, 301, 601, 1801, 10801]):
+    for grp in ["0", ">0"]:
+        all_hs = None
+        if "train" in blocks[0]:
+            for cat in ["train", "test", "val"]:
+                indices = blocks[0][cat]
+                for i, blk in enumerate(blocks):
+                    gidx = indices[:, 0][indices[:, 3] == i]
+                    start_times = blk["tc"][gidx]
+                    if grp == "0":
+                        start_times = start_times[blk["inc"][gidx] == 0]
+                    else:
+                        start_times = start_times[blk["inc"][gidx] > 0]
+                    hs, es = np.histogram(start_times, edges)
+                    if all_hs is None:
+                        all_hs = hs
+                    else:
+                        all_hs += hs
         else:
-            all_hs += hs
-    for h, e in zip(all_hs, es):
-        print(f"{e}:{h}")
+            for blk in blocks:
+                start_times = blk["tc"]
+                if grp == "0":
+                    start_times = start_times[blk["inc"] == 0]
+                else:
+                    start_times = start_times[blk["inc"] > 0]
+                hs, es = np.histogram(start_times, edges)
+                if all_hs is None:
+                    all_hs = hs
+                else:
+                    all_hs += hs
+
+        print(f"Increment: {grp}")
+        for h, e in zip(all_hs, es[1:]):
+            print(f"\t{int(e)}: {h:.1e}")
 
 
 def game_lengths(md, gs):
@@ -127,7 +150,11 @@ def load_block_data(blockdirs):
         clk = np.memmap(f"{dn}/clk.npy", mode="r", dtype="int16")
         welos = np.memmap(f"{dn}/welos.npy", mode="r", dtype="int16")
         belos = np.memmap(f"{dn}/belos.npy", mode="r", dtype="int16")
-        blocks.append({"gs": gs, "clk": clk, "welos": welos, "belos": belos})
+        tc = np.memmap(f"{dn}/timeCtl.npy", mode="r", dtype="int16")
+        inc = np.memmap(f"{dn}/inc.npy", mode="r", dtype="int16")
+        blocks.append(
+            {"gs": gs, "clk": clk, "welos": welos, "belos": belos, "tc": tc, "inc": inc}
+        )
     return blocks
 
 
@@ -147,7 +174,11 @@ def load_filtered_data(npydir):
         welos = np.memmap(f"{dn}/welos.npy", mode="r", dtype="int16")
         belos = np.memmap(f"{dn}/belos.npy", mode="r", dtype="int16")
         gs = np.memmap(f"{dn}/gamestarts.npy", mode="r", dtype="int64")
-        blocks.append({"welos": welos, "belos": belos, "gs": gs, "clk": clk})
+        tc = np.memmap(f"{dn}/timeCtl.npy", mode="r", dtype="int16")
+        inc = np.memmap(f"{dn}/inc.npy", mode="r", dtype="int16")
+        blocks.append(
+            {"welos": welos, "belos": belos, "gs": gs, "clk": clk, "tc": tc, "inc": inc}
+        )
     blocks[0].update(data)
 
     return blocks
@@ -196,5 +227,4 @@ if __name__ == "__main__":
             elo_matrix(welos, belos)
 
     if args.time_hist:
-        assert not fmd
         time_hist(blocks)
