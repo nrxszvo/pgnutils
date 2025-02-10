@@ -208,6 +208,37 @@ class TransformerBlock(nn.Module):
         return out
 
 
+class EloHead(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.params = params
+        self.norm1 = RMSNorm(params.dim, eps=params.norm_eps)
+        self.gru = nn.GRU(params.dim, params.dim, bias=False, batch_first=True)
+        self.h0 = nn.Parameter(torch.randn(params.dim))
+        self.norm2 = RMSNorm(params.dim, eps=params.norm_eps)
+        self.output = nn.Linear(params.dim, params.elo_pred_size, bias=False)
+
+    def forward(self, h):
+        bs = h.shape[0]
+        h0 = self.h0[None, None].repeat(1, bs, 1)
+        h, _ = self.gru(self.norm1(h), h0)
+        h = self.output(self.norm2(h)).float()
+        if self.params.gaussian_elo:
+            # make sure variance is non-negative
+            h[:, :, 1] = torch.exp(h[:, :, 1])
+        return h
+
+
+class MoveHead(nn.Module):
+    def __init__(self, params: ModelArgs):
+        super().__init__()
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
+
+    def forward(self, h: torch.Tensor):
+        return self.output(self.norm(h)).float()
+
+
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -222,18 +253,18 @@ class Transformer(nn.Module):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        if params.n_timecontrol_heads > 0:
-            self.preproc = nn.Linear(
-                params.dim, params.n_timecontrol_heads * params.dim, bias=False
-            )
+        tcdim = params.n_timecontrol_heads * params.dim
+        self.preproc = nn.Linear(params.dim, tcdim, bias=False)
 
         if params.elo_pred_size > 0:
-            self.elo_norm = RMSNorm(params.dim, eps=params.norm_eps)
-            self.elo_output = nn.Linear(params.dim, params.elo_pred_size, bias=False)
+            self.elo_heads = nn.ModuleList()
+            for _ in range(params.n_timecontrol_heads):
+                self.elo_heads.append(EloHead(params))
 
         if params.predict_move:
-            self.move_norm = RMSNorm(params.dim, eps=params.norm_eps)
-            self.move_output = nn.Linear(params.dim, params.vocab_size, bias=False)
+            self.move_heads = nn.ModuleList()
+            for _ in range(params.n_timecontrol_heads):
+                self.move_heads.append(MoveHead(params))
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -241,45 +272,28 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
-    def _apply_timecontrol(self, h: torch.Tensor):
-        if self.params.n_timecontrol_heads > 0:
-            h = F.silu(self.preproc(h))
-            bs, seqlen, _ = h.shape
-            h = (
-                h.reshape(bs, seqlen, self.params.n_timecontrol_heads, self.params.dim)
-                .permute(0, 2, 1, 3)
-                .reshape(bs * self.params.n_timecontrol_heads, seqlen, self.params.dim)
-            )
-        return h
-
     def _reshape_timecontrol(self, h):
         bs, seqlen, dim = h.shape
-        h = (
-            h.reshape(-1, self.params.n_timecontrol_heads, seqlen, dim)
-            .squeeze(1)
-            .permute(0, 2, 1, 3)
-        )
+        h = h.reshape(bs, seqlen, self.params.n_timecontrol_heads, -1)
         return h
 
     def _get_elo_pred(self, h: torch.Tensor):
         if self.params.elo_pred_size > 0:
-            h = self.elo_norm(h)
-            h = self.elo_output(h).float()
-            h = self._reshape_timecontrol(h)
-            if self.params.gaussian_elo:
-                # make sure variance is non-negative
-                h[:, :, :, 1] = torch.exp(h[:, :, :, 1]) * torch.sigmoid(h[:, :, :, 1])
-
-            return h
+            h_outs = []
+            for i in range(self.params.n_timecontrol_heads):
+                h_out = self.elo_heads[i](h[:, :, i])
+                h_outs.append(h_out)
+            return torch.stack(h_outs, 2)
         else:
             return None
 
     def _get_move_pred(self, h: torch.Tensor):
         if self.params.predict_move:
-            h = self.move_norm(h)
-            h = self.move_output(h).float()
-            h = self._reshape_timecontrol(h)
-            return h
+            h_outs = []
+            for i in range(self.params.n_timecontrol_heads):
+                h_out = self.move_heads[i](h[:, :, i])
+                h_outs.append(h_out)
+            return torch.stack(h_outs, dim=2)
         else:
             return None
 
@@ -299,5 +313,6 @@ class Transformer(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
 
-        h = self._apply_timecontrol(h)
+        h = F.silu(self.preproc(h))
+        h = self._reshape_timecontrol(h)
         return self._get_move_pred(h), self._get_elo_pred(h)

@@ -173,7 +173,7 @@ class MimicChessModule(L.LightningModule):
             index = tc_groups[:, None, None, None].expand([bs, seqlen, 1, nelo])
             pred = torch.gather(pred, 2, index).squeeze(2)
             pred = pred.permute(0, 2, 1)
-        return pred[:, :, self.opening_moves - 1 :]
+        return pred[:, :, self.opening_moves :]
 
     def _get_loss(self, move_pred, elo_pred, batch):
         elo_loss = None

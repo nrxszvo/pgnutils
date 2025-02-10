@@ -16,9 +16,9 @@ def collate_fn(batch):
     maxinp = 0
     openmoves = batch[0]["opening"].shape[0]
     for d in batch:
-        maxinp = max(maxinp, d["n_inp"])
+        maxinp = max(maxinp, d["nmoves"])
 
-    maxtgt = maxinp + 1 - openmoves
+    maxtgt = maxinp - openmoves
     bs = len(batch)
     inputs = torch.full((bs, maxinp), NOOP, dtype=torch.int32)
     openings = torch.empty((bs, openmoves), dtype=torch.int64)
