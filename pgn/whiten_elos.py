@@ -63,7 +63,6 @@ def main():
     with open(os.path.join(args.fmd)) as f:
         fmd = json.load(f)
 
-    breakpoint()
     if args.test:
         test_mean, test_std = get_whiten_params_slow(fmd)
         print(f"test mean: {test_mean}")
@@ -75,22 +74,6 @@ def main():
     print(f"std: {std}")
 
     if not args.test:
-        for dn in fmd["block_dirs"]:
-            for fn in ["welos.npy", "belos.npy"]:
-                elos = np.memmap(
-                    os.path.join(dn, fn),
-                    mode="r",
-                    dtype="int16",
-                )
-                whitened = (elos - mean) / std
-                norm_elos = np.memmap(
-                    os.path.join(dn, f"whitened_{fn}"),
-                    mode="w+",
-                    dtype="float32",
-                    shape=elos.shape,
-                )
-                norm_elos[:] = whitened[:]
-
         fmd["elo_mean"] = mean
         fmd["elo_std"] = std
         with open(os.path.join(args.fmd), "w") as f:
