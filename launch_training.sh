@@ -2,6 +2,17 @@ name=default
 nproc=8
 nthread=8
 
+cmd="git diff-index --quiet HEAD --"
+$cmd
+if [ $? -ne 0 ]
+then
+	echo "uncommited changes in working tree; exiting";
+	exit
+fi
+
+commit=$(git rev-parse HEAD)
+echo "commit: ${commit}"
+
 for var in "$@"
 do
 	param=(${var//=/ })
@@ -19,6 +30,6 @@ do
 		exit
 	fi
 done
-cmd="OMP_NUM_THREADS=${nthread} torchrun --standalone --nnodes 1 --nproc-per-node ${nproc} train.py --name ${name}"
+cmd="OMP_NUM_THREADS=${nthread} torchrun --standalone --nnodes 1 --nproc-per-node ${nproc} train.py --name ${name} --commit ${commit}"
 echo $cmd
 eval $cmd

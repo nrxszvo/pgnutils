@@ -32,6 +32,11 @@ parser.add_argument(
     default=None,
     help="MMC checkpoint from which to resume training",
 )
+parser.add_argument(
+    "--commit",
+    default=None,
+    help="current commit associated with this version of codebase",
+)
 
 
 def torch_dist_init():
@@ -55,11 +60,13 @@ def torch_dist_init():
 def main():
     args = parser.parse_args()
     cfgyml = get_config(args.cfg)
+    cfgyml.commit = args.commit
 
     save_path = os.path.join(args.save_path, args.name)
     os.makedirs(save_path, exist_ok=True)
 
-    shutil.copyfile(args.cfg, os.path.join(save_path, args.cfg))
+    cfgyml.save(os.path.join(save_path, args.cfg))
+    return
 
     # torch_dist_init()
     devices = int(os.environ.get("WORLD_SIZE", 1))
