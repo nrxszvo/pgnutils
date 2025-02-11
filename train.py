@@ -66,7 +66,6 @@ def main():
     os.makedirs(save_path, exist_ok=True)
 
     cfgyml.save(os.path.join(save_path, args.cfg))
-    return
 
     # torch_dist_init()
     devices = int(os.environ.get("WORLD_SIZE", 1))
