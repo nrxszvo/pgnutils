@@ -13,20 +13,21 @@ from pgn.py.lib.reconstruct import count_invalid
 
 
 def get_model_args(cfgyml):
-    model_args = ModelArgs(cfgyml.model_args)
-    if cfgyml.elo_params["predict"]:
-        model_args.gaussian_elo = cfgyml.elo_params["loss"] == "gaussian_nll"
-        if cfgyml.elo_params["loss"] == "cross_entropy":
-            model_args.elo_pred_size = len(cfgyml.elo_params["edges"]) + 1
-        elif cfgyml.elo_params["loss"] == "gaussian_nll":
+    model_args = ModelArgs(cfgyml.model_args.__dict__)
+    if cfgyml.elo_params.predict:
+        model_args.gaussian_elo = cfgyml.elo_params.loss == "gaussian_nll"
+        if cfgyml.elo_params.loss == "cross_entropy":
+            model_args.elo_pred_size = len(cfgyml.elo_params.edges) + 1
+        elif cfgyml.elo_params.loss == "gaussian_nll":
             model_args.elo_pred_size = 2
-        elif cfgyml.elo_params["loss"] == "mse":
+        elif cfgyml.elo_params.loss == "mse":
             model_args.elo_pred_size = 1
         else:
             raise Exception("did not recognize loss function name")
     model_args.n_timecontrol_heads = len(
         [n for _, grp in cfgyml.tc_groups.items() for n in grp]
     )
+    model_args.n_elo_heads = len(cfgyml.elo_params.edges)
     return model_args
 
 
@@ -48,15 +49,15 @@ def init_modules(
     model_args = get_model_args(cfgyml)
 
     whiten_params = None
-    if cfgyml.elo_params["loss"] in ["gaussian_nll", "mse"]:
+    if cfgyml.elo_params.loss in ["gaussian_nll", "mse"]:
         with open(f"{cfgyml.datadir}/fmd.json") as f:
             fmd = json.load(f)
         whiten_params = (fmd["elo_mean"], fmd["elo_std"])
-    cfgyml.elo_params["whiten_params"] = whiten_params
+    cfgyml.elo_params.whiten_params = whiten_params
 
     dm = MMCDataModule(
         datadir=datadir,
-        elo_edges=cfgyml.elo_params["edges"],
+        elo_edges=cfgyml.elo_params.edges,
         tc_groups=cfgyml.tc_groups,
         max_seq_len=model_args.max_seq_len,
         batch_size=cfgyml.batch_size,
@@ -65,7 +66,7 @@ def init_modules(
         max_testsamp=n_samp,
         opening_moves=cfgyml.opening_moves,
     )
-    cfgyml.elo_params["constant_var"] = constant_var
+    cfgyml.elo_params.constant_var = constant_var
 
     module_args = MMCModuleArgs(
         name=name,

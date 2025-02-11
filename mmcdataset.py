@@ -31,6 +31,8 @@ def collate_fn(batch):
     )
     move_targets = torch.full((bs, maxtgt), NOOP, dtype=torch.int64)
     tc_groups = torch.empty(bs, dtype=torch.int64)
+    elo_groups = torch.empty((bs, 2), dtype=torch.int64)
+
     for i, d in enumerate(batch):
         inp = d["input"]
         elo_tgt = d["elo_target"]
@@ -40,6 +42,7 @@ def collate_fn(batch):
         move_targets[i, : mv_tgt.shape[0]] = torch.from_numpy(mv_tgt)
         openings[i] = torch.from_numpy(d["opening"])
         tc_groups[i] = d["tc_id"]
+        elo_groups[i] = torch.tensor(d["elo_groups"], dtype=torch.int64)
 
     return {
         "input": inputs,
@@ -47,6 +50,7 @@ def collate_fn(batch):
         "move_target": move_targets,
         "opening": openings,
         "tc_groups": tc_groups,
+        "elo_groups": elo_groups,
     }
 
 
@@ -169,9 +173,9 @@ class MMCDataset(Dataset):
             mu, s = self.whiten_params
             elo_tgt[::2] = (welo - mu) / s
             elo_tgt[1::2] = (belo - mu) / s
-        else:
-            elo_tgt[::2] = self._get_group(welo)
-            elo_tgt[1::2] = self._get_group(belo)
+
+        welo_grp = self._get_group(welo)
+        belo_grp = self._get_group(belo)
 
         mv_tgt = np.empty(nmoves - self.opening_moves, dtype="int64")
         mv_tgt[:] = mvids[gs + self.opening_moves : gs + nmoves]
@@ -185,6 +189,7 @@ class MMCDataset(Dataset):
             "opening": opening,
             "nmoves": nmoves,
             "tc_id": tc_id,
+            "elo_groups": [welo_grp, belo_grp],
         }
 
 
@@ -370,9 +375,6 @@ class MMCDataModule(L.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.elo_edges = elo_edges
-        if len(self.elo_edges) == 0 or self.elo_edges[-1] < float("inf"):
-            self.elo_edges.append(float("inf"))
-
         self.load_cheatdata = load_cheatdata
         self.whiten_params = whiten_params
         self.__dict__.update(load_data(datadir, load_cheatdata))

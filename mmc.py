@@ -9,9 +9,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
     LinearLR,
-    ReduceLROnPlateau,
     SequentialLR,
-    StepLR,
 )
 from torch.distributions.normal import Normal
 
@@ -103,47 +101,24 @@ class MimicChessModule(L.LightningModule):
         return nparams, nwflops
 
     def configure_optimizers(self):
-        lr = self.lr_scheduler_params["lr"]
+        lr = self.lr_scheduler_params.lr
         optimizer = torch.optim.Adam(self.trainer.model.parameters(), lr=lr)
-        name = self.lr_scheduler_params["name"]
-        if name == "ReduceLROnPlateau":
-            gamma = self.lr_scheduler_params["gamma"]
-            threshold = self.lr_scheduler_params["threshold"]
-            patience = self.lr_scheduler_params["patience"]
-            min_lr = self.lr_scheduler_params["min_lr"]
-            scheduler = ReduceLROnPlateau(
-                optimizer=optimizer,
-                factor=gamma,
-                threshold=threshold,
-                patience=patience,
-                min_lr=min_lr,
-            )
-            freq = self.val_check_steps
-        elif name == "StepLR":
-            gamma = self.lr_scheduler_params["gamma"]
-            num_decay = self.lr_scheduler_params["num_lr_decays"]
-            step_size = int(self.max_steps / num_decay)
-            scheduler = StepLR(
-                optimizer=optimizer,
-                step_size=step_size,
-                gamma=gamma,
-            )
-            freq = 1
-        elif name == "Cosine":
-            min_lr = self.lr_scheduler_params["min_lr"]
+        name = self.lr_scheduler_params.name
+        if name == "Cosine":
+            min_lr = self.lr_scheduler_params.min_lr
             scheduler = CosineAnnealingLR(
                 optimizer=optimizer, T_max=self.max_steps, eta_min=min_lr
             )
             freq = 1
         elif name == "WarmUpCosine":
-            warmup_steps = self.lr_scheduler_params["warmup_steps"]
+            warmup_steps = self.lr_scheduler_params.warmup_steps
             warmupLR = LinearLR(
                 optimizer=optimizer,
                 start_factor=1 / warmup_steps,
                 end_factor=1,
                 total_iters=warmup_steps,
             )
-            min_lr = self.lr_scheduler_params["min_lr"]
+            min_lr = self.lr_scheduler_params.min_lr
             cosineLR = CosineAnnealingLR(
                 optimizer=optimizer,
                 T_max=self.max_steps - warmup_steps,
@@ -166,14 +141,38 @@ class MimicChessModule(L.LightningModule):
     def forward(self, tokens):
         return self.model(tokens)
 
-    def _chomp_pred(self, pred, batch):
+    def _chomp_elo_pred(self, pred, batch):
         if self.params.model_args.n_timecontrol_heads > 0:
             tc_groups = batch["tc_groups"]
-            bs, seqlen, ntc, nelo = pred.shape
-            index = tc_groups[:, None, None, None].expand([bs, seqlen, 1, nelo])
+            bs, seqlen, ntc, ndim = pred.shape
+            index = tc_groups[:, None, None, None].expand([bs, seqlen, 1, ndim])
             pred = torch.gather(pred, 2, index).squeeze(2)
             pred = pred.permute(0, 2, 1)
         return pred[:, :, self.opening_moves :]
+
+    def _chomp_move_pred(self, pred, batch):
+        if self.params.model_args.n_timecontrol_heads > 0:
+            tc_groups = batch["tc_groups"]
+            elo_groups = batch["elo_groups"]
+            bs, seqlen, ntc, nelo, npred = pred.shape
+            index = tc_groups[:, None, None, None, None].expand(
+                [bs, seqlen, 1, nelo, npred]
+            )
+            pred = torch.gather(pred, 2, index).squeeze(2)
+
+            preds = []
+            for i in [0, 1]:
+                subpred = pred[:, i::2]
+                seqlen = subpred.shape[1]
+                index = elo_groups[:, i, None, None, None].expand(
+                    [bs, seqlen, 1, npred]
+                )
+                subpred = torch.gather(subpred, 2, index).squeeze(2)
+                subpred = subpred.permute(0, 2, 1)
+                subpred = subpred[:, :, self.opening_moves :]
+                preds.append(subpred)
+
+        return preds
 
     def _get_loss(self, move_pred, elo_pred, batch):
         elo_loss = None
@@ -184,47 +183,51 @@ class MimicChessModule(L.LightningModule):
             loss += move_loss
         if elo_pred is not None and self._get_elo_warmup_stage() != "WARMUP_ELO":
             elo_loss, elo_pred = self._get_elo_loss(elo_pred, batch)
-            loss += self.elo_params["weight"] * elo_loss
+            loss += self.elo_params.weight * elo_loss
 
         return loss, move_loss, elo_loss, elo_pred
 
     def _get_elo_warmup_stage(self):
-        if self.elo_params["constant_var"]:
+        if self.elo_params.constant_var:
             return "WARMUP_VAR"
         else:
-            if self.global_step < self.elo_params["warmup_elo_steps"]:
+            if self.global_step < self.elo_params.warmup_elo_steps:
                 return "WARMUP_ELO"
             elif (
-                self.elo_params["loss"] == "gaussian_nll"
+                self.elo_params.loss == "gaussian_nll"
                 and self.global_step
-                < self.elo_params["warmup_elo_steps"]
-                + self.elo_params["warmup_var_steps"]
+                < self.elo_params.warmup_elo_steps + self.elo_params.warmup_var_steps
             ):
                 return "WARMUP_VAR"
             else:
                 return "COMPLETE"
 
     def _get_elo_loss(self, elo_pred, batch):
-        elo_pred = self._chomp_pred(elo_pred, batch)
-        if self.elo_params["loss"] == "cross_entropy":
+        elo_pred = self._chomp_elo_pred(elo_pred, batch)
+        if self.elo_params.loss == "cross_entropy":
             loss = F.cross_entropy(elo_pred, batch["elo_target"], ignore_index=NOOP)
-        elif self.elo_params["loss"] == "gaussian_nll":
+        elif self.elo_params.loss == "gaussian_nll":
             exp = elo_pred[:, 0]
             var = elo_pred[:, 1]
             if self._get_elo_warmup_stage() == "WARMUP_VAR":
-                var = torch.ones_like(var) * self.elo_params["initial_var"]
-
+                var = torch.ones_like(var) * self.elo_params.initial_var
             exp[batch["elo_target"] == NOOP] = NOOP
             var[batch["elo_target"] == NOOP] = 0
             loss = F.gaussian_nll_loss(exp, batch["elo_target"], var)
-        elif self.elo_params["loss"] == "mse":
+        elif self.elo_params.loss == "mse":
             loss = F.mse_loss(elo_pred.squeeze(1), batch["elo_target"])
 
         return loss, elo_pred
 
     def _get_move_loss(self, move_pred, batch):
-        move_pred = self._chomp_pred(move_pred, batch)
-        return F.cross_entropy(move_pred, batch["move_target"], ignore_index=NOOP)
+        move_preds = self._chomp_move_pred(move_pred, batch)
+        loss = 0
+        for i in [0, 1]:
+            loss += F.cross_entropy(
+                move_preds[i], batch["move_target"][:, i::2], ignore_index=NOOP
+            )
+
+        return loss / 2
 
     def training_step(self, batch, batch_idx):
         move_pred, elo_pred = self(batch["input"])
@@ -235,7 +238,7 @@ class MimicChessModule(L.LightningModule):
         if elo_loss is not None:
             self.log("train_elo_loss", elo_loss, sync_dist=True)
         if (
-            self.elo_params["loss"] == "gaussian_nll"
+            self.elo_params.loss == "gaussian_nll"
             and self._get_elo_warmup_stage() == "COMPLETE"
         ):
             self.log(
@@ -263,7 +266,7 @@ class MimicChessModule(L.LightningModule):
         if elo_loss is not None:
             self.log("valid_elo_loss", elo_loss, sync_dist=True)
         if (
-            self.elo_params["loss"] == "gaussian_nll"
+            self.elo_params.loss == "gaussian_nll"
             and self._get_elo_warmup_stage() == "COMPLETE"
         ):
             self.log(
@@ -292,7 +295,7 @@ class MimicChessModule(L.LightningModule):
         return next_token
 
     def _get_avg_std(self, elo_pred, tgts):
-        mean, std = self.elo_params["whiten_params"]
+        mean, std = self.elo_params.whiten_params
         npred = (tgts != NOOP).sum()
         u_std_preds = (elo_pred[:, 1] ** 0.5) * std
         u_std_preds[tgts == NOOP] = 0

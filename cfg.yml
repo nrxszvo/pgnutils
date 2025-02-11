@@ -6,10 +6,11 @@ elo_params:
   warmup_elo_steps: 0
   warmup_var_steps: 0
   weight: 1
-  edges: [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600]
+  edges: [1400, 1800, 2000, 2200, 2400, 4000]
 tc_groups: 
- 600: [1000]
- 10800: [1000]
+  180: [1000]
+  600: [1000]
+  10800: [1000]
 model_args:
   predict_move: True
   dim: 1024 

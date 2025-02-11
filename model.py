@@ -20,6 +20,7 @@ class ModelArgs:
     predict_move: bool = True
     elo_pred_size: int = 10
     gaussian_elo: bool = False
+    n_elo_heads: int = 10
     n_timecontrol_heads: int = 1
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
     ffn_dim_multiplier: Optional[float] = None
@@ -212,17 +213,11 @@ class EloHead(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
         self.params = params
-        self.norm1 = RMSNorm(params.dim, eps=params.norm_eps)
-        self.gru = nn.GRU(params.dim, params.dim, bias=False, batch_first=True)
-        self.h0 = nn.Parameter(torch.randn(params.dim))
-        self.norm2 = RMSNorm(params.dim, eps=params.norm_eps)
+        self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         self.output = nn.Linear(params.dim, params.elo_pred_size, bias=False)
 
     def forward(self, h):
-        bs = h.shape[0]
-        h0 = self.h0[None, None].repeat(1, bs, 1)
-        h, _ = self.gru(self.norm1(h), h0)
-        h = self.output(self.norm2(h)).float()
+        h = self.output(self.norm(h)).float()
         if self.params.gaussian_elo:
             # make sure variance is non-negative
             h[:, :, 1] = torch.exp(h[:, :, 1])
@@ -264,7 +259,10 @@ class Transformer(nn.Module):
         if params.predict_move:
             self.move_heads = nn.ModuleList()
             for _ in range(params.n_timecontrol_heads):
-                self.move_heads.append(MoveHead(params))
+                elo_heads = nn.ModuleList()
+                for _ in range(params.n_elo_heads):
+                    elo_heads.append(MoveHead(params))
+                self.move_heads.append(elo_heads)
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -289,11 +287,14 @@ class Transformer(nn.Module):
 
     def _get_move_pred(self, h: torch.Tensor):
         if self.params.predict_move:
-            h_outs = []
+            tc_outs = []
             for i in range(self.params.n_timecontrol_heads):
-                h_out = self.move_heads[i](h[:, :, i])
-                h_outs.append(h_out)
-            return torch.stack(h_outs, dim=2)
+                elo_outs = []
+                for j in range(self.params.n_elo_heads):
+                    h_out = self.move_heads[i][j](h[:, :, i])
+                    elo_outs.append(h_out)
+                tc_outs.append(torch.stack(elo_outs, dim=2))
+            return torch.stack(tc_outs, dim=2)
         else:
             return None
 

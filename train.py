@@ -1,7 +1,6 @@
 import argparse
 import os
 
-import shutil
 import sys
 from datetime import datetime
 
@@ -65,8 +64,6 @@ def main():
     save_path = os.path.join(args.save_path, args.name)
     os.makedirs(save_path, exist_ok=True)
 
-    cfgyml.save(os.path.join(save_path, args.cfg))
-
     # torch_dist_init()
     devices = int(os.environ.get("WORLD_SIZE", 1))
 
@@ -81,9 +78,10 @@ def main():
         outdir=os.path.join(save_path, "ckpt"),
     )
 
+    cfgyml.save(os.path.join(save_path, args.cfg))
     nweights, nflpweights = mmc.num_params()
     est_tflops = (
-        6 * nflpweights * cfgyml.batch_size * cfgyml.model_args["max_seq_len"] / 1e12
+        6 * nflpweights * cfgyml.batch_size * cfgyml.model_args.max_seq_len / 1e12
     )
     print(f"# model params: {nweights:.2e}")
     print(f"estimated TFLOPs: {est_tflops:.1f}")

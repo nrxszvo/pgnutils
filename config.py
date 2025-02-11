@@ -36,6 +36,9 @@ class Config:
                 lines.append("\t" * indent + f"{k}: {v}")
         return "\n".join(lines)
 
+    def items(self):
+        return self.__dict__.items()
+
 
 def test():
     with open("cfg.yml") as f:
