@@ -141,7 +141,22 @@ class MimicChessModule(L.LightningModule):
     def forward(self, tokens):
         return self.model(tokens)
 
-    def _chomp_elo_pred(self, pred, batch):
+    def _get_elo_warmup_stage(self):
+        if self.elo_params.constant_var:
+            return "WARMUP_VAR"
+        else:
+            if self.global_step < self.elo_params.warmup_elo_steps:
+                return "WARMUP_ELO"
+            elif (
+                self.elo_params.loss == "gaussian_nll"
+                and self.global_step
+                < self.elo_params.warmup_elo_steps + self.elo_params.warmup_var_steps
+            ):
+                return "WARMUP_VAR"
+            else:
+                return "COMPLETE"
+
+    def _format_elo_pred(self, pred, batch):
         if self.params.model_args.n_timecontrol_heads > 0:
             tc_groups = batch["tc_groups"]
             bs, seqlen, ntc, ndim = pred.shape
@@ -150,7 +165,24 @@ class MimicChessModule(L.LightningModule):
             pred = pred.permute(0, 2, 1)
         return pred[:, :, self.opening_moves :]
 
-    def _chomp_move_pred(self, pred, batch):
+    def _get_elo_loss(self, elo_pred, batch):
+        elo_pred = self._format_elo_pred(elo_pred, batch)
+        if self.elo_params.loss == "cross_entropy":
+            loss = F.cross_entropy(elo_pred, batch["elo_target"], ignore_index=NOOP)
+        elif self.elo_params.loss == "gaussian_nll":
+            exp = elo_pred[:, 0]
+            var = elo_pred[:, 1]
+            if self._get_elo_warmup_stage() == "WARMUP_VAR":
+                var = torch.ones_like(var) * self.elo_params.initial_var
+            exp[batch["elo_target"] == NOOP] = NOOP
+            var[batch["elo_target"] == NOOP] = 0
+            loss = F.gaussian_nll_loss(exp, batch["elo_target"], var)
+        elif self.elo_params.loss == "mse":
+            loss = F.mse_loss(elo_pred.squeeze(1), batch["elo_target"])
+
+        return loss, elo_pred
+
+    def _format_move_pred(self, pred, batch):
         if self.params.model_args.n_timecontrol_heads > 0:
             tc_groups = batch["tc_groups"]
             elo_groups = batch["elo_groups"]
@@ -174,6 +206,16 @@ class MimicChessModule(L.LightningModule):
 
         return preds
 
+    def _get_move_loss(self, move_pred, batch):
+        move_preds = self._format_move_pred(move_pred, batch)
+        loss = 0
+        for i in [0, 1]:
+            loss += F.cross_entropy(
+                move_preds[i], batch["move_target"][:, i::2], ignore_index=NOOP
+            )
+
+        return loss / 2
+
     def _get_loss(self, move_pred, elo_pred, batch):
         elo_loss = None
         move_loss = None
@@ -186,48 +228,6 @@ class MimicChessModule(L.LightningModule):
             loss += self.elo_params.weight * elo_loss
 
         return loss, move_loss, elo_loss, elo_pred
-
-    def _get_elo_warmup_stage(self):
-        if self.elo_params.constant_var:
-            return "WARMUP_VAR"
-        else:
-            if self.global_step < self.elo_params.warmup_elo_steps:
-                return "WARMUP_ELO"
-            elif (
-                self.elo_params.loss == "gaussian_nll"
-                and self.global_step
-                < self.elo_params.warmup_elo_steps + self.elo_params.warmup_var_steps
-            ):
-                return "WARMUP_VAR"
-            else:
-                return "COMPLETE"
-
-    def _get_elo_loss(self, elo_pred, batch):
-        elo_pred = self._chomp_elo_pred(elo_pred, batch)
-        if self.elo_params.loss == "cross_entropy":
-            loss = F.cross_entropy(elo_pred, batch["elo_target"], ignore_index=NOOP)
-        elif self.elo_params.loss == "gaussian_nll":
-            exp = elo_pred[:, 0]
-            var = elo_pred[:, 1]
-            if self._get_elo_warmup_stage() == "WARMUP_VAR":
-                var = torch.ones_like(var) * self.elo_params.initial_var
-            exp[batch["elo_target"] == NOOP] = NOOP
-            var[batch["elo_target"] == NOOP] = 0
-            loss = F.gaussian_nll_loss(exp, batch["elo_target"], var)
-        elif self.elo_params.loss == "mse":
-            loss = F.mse_loss(elo_pred.squeeze(1), batch["elo_target"])
-
-        return loss, elo_pred
-
-    def _get_move_loss(self, move_pred, batch):
-        move_preds = self._chomp_move_pred(move_pred, batch)
-        loss = 0
-        for i in [0, 1]:
-            loss += F.cross_entropy(
-                move_preds[i], batch["move_target"][:, i::2], ignore_index=NOOP
-            )
-
-        return loss / 2
 
     def training_step(self, batch, batch_idx):
         move_pred, elo_pred = self(batch["input"])
@@ -316,7 +316,7 @@ class MimicChessModule(L.LightningModule):
 
         move_data = elo_data = None
         if move_pred is not None:
-            move_pred = self._chomp_pred(move_pred, batch)
+            move_pred = self._format_move_pred(move_pred, batch)
             probs = torch.softmax(move_pred, dim=1)
             sprobs, smoves = torch.sort(probs, dim=1, descending=True)
             sprobs = sprobs[:, :5]
