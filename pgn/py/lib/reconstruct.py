@@ -74,16 +74,35 @@ def mvid_to_uci(mvid, board, white, black, update_state=True, promote="q"):
     return uci
 
 
+def uci_to_castle_id(uci, white, black):
+    if len(uci) == 4:
+        sf, sr, df, dr = uci
+        if sf == "e":
+            if sr == "1" and dr == "1" and white[inf.KING].pos() == (0, 4):
+                if df == "g":
+                    return inf.KCASTLEW
+                elif df == "c":
+                    return inf.QCASTLEW
+            elif sr == "8" and dr == "8" and black[inf.KING].pos() == (7, 4):
+                if df == "g":
+                    return inf.KCASTLEB
+                elif df == "c":
+                    return inf.QCASTLEB
+    return None
+
+
 def uci_to_mvid(uci, white, black):
-    sf = inf.FILE_TO_INT[uci[0]]
-    sr = inf.rank_to_int(uci[1])
-    dst = uci[2:4]
-    piece = None
-    for p in white + black:
-        if not p.captured and p.rank == sr and p.file == sf:
-            piece = p
-            break
-    mvid = piece.pid * 64 + inf.sqr_to_int(dst)
+    mvid = uci_to_castle_id(uci, white, black)
+    if mvid is None:
+        sf = inf.FILE_TO_INT[uci[0]]
+        sr = inf.rank_to_int(uci[1])
+        dst = uci[2:4]
+        piece = None
+        for p in white + black:
+            if not p.captured and p.rank == sr and p.file == sf:
+                piece = p
+                break
+        mvid = piece.pid * 64 + inf.sqr_to_int(dst)
     return mvid
 
 
@@ -99,7 +118,8 @@ def is_null(uci):
 class BoardState:
     def __init__(self):
         self.state, self.white, self.black = inf.board_state()
-        self.board = chess.pgn.Game().board()
+        self.game = chess.pgn.Game()
+        self.board = self.game.board()
 
     def uci_to_mvid(self, uci):
         return uci_to_mvid(uci, self.white, self.black)
@@ -109,11 +129,19 @@ class BoardState:
         for rank in reversed(self.state):
             for piece in rank:
                 if piece is None or piece.captured:
-                    line += "  "
+                    line += " ."
                 else:
-                    line += piece.name.rjust(2)
+                    if piece.color == inf.COLORW:
+                        name = piece.name.upper()
+                    else:
+                        name = piece.name.lower()
+                    line += name.rjust(2)
             line += "\n"
         return line
+
+    def mvid_to_uci(self, mvid):
+        uci = mvid_to_uci(mvid, self.state, self.white, self.black, False)
+        return uci
 
     def update(self, mvid):
         uci = mvid_to_uci(mvid, self.state, self.white, self.black, False)
