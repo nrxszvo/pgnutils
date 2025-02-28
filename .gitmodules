@@ -1,3 +1,0 @@
-[submodule "pgn/zstd"]
-	path = pgn/cpp/zstd
-	url = git@github.com:facebook/zstd.git
