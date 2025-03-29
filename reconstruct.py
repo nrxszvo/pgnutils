@@ -199,7 +199,7 @@ def pid_to_name(pid):
         return 'P'
 
 
-def try_king_in_check(piece, dr, df, board, white, black):
+def try_king_in_check(piece, dr, df, board, board_state, white, black):
     idx = piece.pid if piece.pid < 16 else piece.pid - 16
     cur = white if piece.pid < 16 else black
     opp = white if piece.pid >= 16 else black
@@ -207,29 +207,35 @@ def try_king_in_check(piece, dr, df, board, white, black):
     sr = cur[idx].rank
     sf = cur[idx].file
 
+    assert cur[idx] == board_state[sr][sf]
+
     cur[idx].rank = dr
     cur[idx].file = df
 
-    board[sr][sf] = None
-    sav = board[dr][df]
+    board_state[sr][sf] = None
+    sav = board_state[dr][df]
+    orig = False
     if sav:
+        orig = sav.captured
         sav.captured = True
-    board[dr][df] = cur[idx]
+    board_state[dr][df] = cur[idx]
 
-    result = inf.king_in_check(board, cur, opp)
+    result = inf.king_in_check(board_state, cur, opp)
 
     if sav:
-        sav.captured = False
-    board[dr][df] = sav
-    board[sr][sf] = cur[idx]
+        sav.captured = orig
+    board_state[dr][df] = sav
+    board_state[sr][sf] = cur[idx]
 
     cur[idx].rank = sr
     cur[idx].file = sf
 
+    compare_board_to_board(board, board_state)
+
     return result
 
 
-def get_invalid_reason(mvid, board, white, black):
+def get_invalid_reason(mvid, board, board_state, white, black):
     data = decode_mvid(mvid)
     if len(data) == 2:
         return 'CASTLE'
@@ -243,35 +249,43 @@ def get_invalid_reason(mvid, board, white, black):
     cur = white if pid < 16 else black
     opp = black if pid < 16 else white
 
+    compare_board_to_board(board, board_state)
     try:
-        if try_king_in_check(piece, dr, df, board, white, black):
+        if try_king_in_check(piece, dr, df, board, board_state, white, black):
             return 'CHECK'
         elif piece.name == "P":
-            assert not (inf.legal_pawn_move(piece, board, dr, df, True)
-                        or inf.legal_pawn_move(piece, board, dr, df, False))
+            compare_board_to_board(board, board_state)
+            assert not (inf.legal_pawn_move(piece, board_state, dr, df, True)
+                        or inf.legal_pawn_move(piece, board_state, dr, df, False))
             return 'PAWN'
         elif piece.name == "R":
-            assert not inf.legal_rook_move(piece, board, dr, df)
+            compare_board_to_board(board, board_state)
+            assert not inf.legal_rook_move(piece, board_state, dr, df)
             return 'ROOK'
         elif piece.name == "N":
-            assert not inf.legal_knight_move(piece, board, dr, df)
+            compare_board_to_board(board, board_state)
+            assert not inf.legal_knight_move(piece, board_state, dr, df)
             return 'KNIGHT'
         elif piece.name == "B":
-            assert not inf.legal_bishop_move(piece, board, dr, df)
+            compare_board_to_board(board, board_state)
+            assert not inf.legal_bishop_move(piece, board_state, dr, df)
             return 'BISHOP'
         elif piece.name == "Q":
-            assert not inf.legal_queen_move(piece, board, dr, df)
+            compare_board_to_board(board, board_state)
+            assert not inf.legal_queen_move(piece, board_state, dr, df)
             return 'QUEEN'
         elif piece.name == "K":
+            compare_board_to_board(board, board_state)
             sr = cur[inf.KING].rank
             sf = cur[inf.KING].file
             cur[inf.KING].rank = dr
             cur[inf.KING].file = df
-            assert inf.king_in_check(board, cur, opp)
+            assert inf.king_in_check(board_state, cur, opp)
             cur[inf.KING].rank = sr
             cur[inf.KING].file = sf
             return 'KING'
-    except:
+    except Exception as e:
+        print(e)
         breakpoint()
 
 
@@ -303,6 +317,9 @@ def compare_board_to_board(board, board_state):
                         raise Exception('board/board_state mismatch')
                     j += 1
             except ValueError:
+                if srow[j] is None:
+                    breakpoint()
+                    raise Exception('board/board_state mismatch')
                 if c == c.lower():
                     if srow[j].color != inf.COLORB:
                         breakpoint()
@@ -334,11 +351,12 @@ def count_invalid(mvids, opening, tgts):
             nmoves = i
             break
         uci = mvid_to_uci(mvid, board_state, white, black, False)
+        compare_board_to_board(board, board_state)
         if is_null(uci):
             reasons['NULL'] += 1
         elif not board.is_legal(chess.Move.from_uci(uci)):
             reason = get_invalid_reason(
-                mvid, board_state, white, black)
+                mvid, board, board_state, white, black)
             reasons[reason] += 1
             nfail += 1
 
