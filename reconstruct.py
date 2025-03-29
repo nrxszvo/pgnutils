@@ -53,6 +53,9 @@ def update_to_uci(update, board, white, black, update_state=True, promote="q"):
         pid -= 16
         state = black
 
+    if state[pid].captured:
+        raise CapturedMoveException
+
     sr = state[pid].rank
     sf = state[pid].file
     if update_state:
@@ -77,6 +80,9 @@ def update_to_uci(update, board, white, black, update_state=True, promote="q"):
 
     uci = f"{src}{dst}"
 
+    if is_null(uci):
+        raise NullMoveException
+
     if promotion(state[pid], dr):
         if update_state:
             state[pid].name = promote.upper()
@@ -85,11 +91,12 @@ def update_to_uci(update, board, white, black, update_state=True, promote="q"):
     return uci
 
 
-def mvid_to_uci(mvid, board, white, black, update_state=True, promote="q"):
+def mvid_to_uci(mvid, board_state, white, black, update_state=True, promote="q"):
     updates = decode_mvid(mvid)
-    uci = update_to_uci(updates[0], board, white, black, update_state, promote)
+    uci = update_to_uci(updates[0], board_state,
+                        white, black, update_state, promote)
     if len(updates) == 2:
-        update_to_uci(updates[1], board, white, black, update_state)
+        update_to_uci(updates[1], board_state, white, black, update_state)
     return uci
 
 
@@ -129,6 +136,18 @@ class IllegalMoveException(Exception):
     pass
 
 
+class IllegalBoardException(IllegalMoveException):
+    pass
+
+
+class NullMoveException(IllegalMoveException):
+    pass
+
+
+class CapturedMoveException(IllegalMoveException):
+    pass
+
+
 def is_null(uci):
     half = int(len(uci) / 2)
     return uci[:half] == uci[half:]
@@ -164,18 +183,15 @@ class BoardState:
 
     def update(self, mvid):
         uci = mvid_to_uci(mvid, self.state, self.white, self.black, False)
-        if is_null(uci):
-            raise IllegalMoveException(f"{uci} is null")
+        mv = chess.Move.from_uci(uci)
+        if self.board.is_legal(mv):
+            mvid_to_uci(mvid, self.state, self.white, self.black)
+            self.board.push(mv)
         else:
-            mv = chess.Move.from_uci(uci)
-            if self.board.is_legal(mv):
-                mvid_to_uci(mvid, self.state, self.white, self.black)
-                self.board.push(mv)
-            else:
-                raise IllegalMoveException(
-                    f"illegal move {uci} for board:\n{self.board}"
-                )
-            return mv
+            raise IllegalMoveException(
+                f"illegal move {uci} for board:\n{self.board}"
+            )
+        return mv
 
 
 exporter = chess.pgn.StringExporter(
@@ -207,7 +223,8 @@ def try_king_in_check(piece, dr, df, board, board_state, white, black):
     sr = cur[idx].rank
     sf = cur[idx].file
 
-    assert cur[idx] == board_state[sr][sf]
+    if cur[idx] != board_state[sr][sf]:
+        breakpoint()
 
     cur[idx].rank = dr
     cur[idx].file = df
@@ -250,43 +267,39 @@ def get_invalid_reason(mvid, board, board_state, white, black):
     opp = black if pid < 16 else white
 
     compare_board_to_board(board, board_state)
-    try:
-        if try_king_in_check(piece, dr, df, board, board_state, white, black):
-            return 'CHECK'
-        elif piece.name == "P":
-            compare_board_to_board(board, board_state)
-            assert not (inf.legal_pawn_move(piece, board_state, dr, df, True)
-                        or inf.legal_pawn_move(piece, board_state, dr, df, False))
-            return 'PAWN'
-        elif piece.name == "R":
-            compare_board_to_board(board, board_state)
-            assert not inf.legal_rook_move(piece, board_state, dr, df)
-            return 'ROOK'
-        elif piece.name == "N":
-            compare_board_to_board(board, board_state)
-            assert not inf.legal_knight_move(piece, board_state, dr, df)
-            return 'KNIGHT'
-        elif piece.name == "B":
-            compare_board_to_board(board, board_state)
-            assert not inf.legal_bishop_move(piece, board_state, dr, df)
-            return 'BISHOP'
-        elif piece.name == "Q":
-            compare_board_to_board(board, board_state)
-            assert not inf.legal_queen_move(piece, board_state, dr, df)
-            return 'QUEEN'
-        elif piece.name == "K":
-            compare_board_to_board(board, board_state)
-            sr = cur[inf.KING].rank
-            sf = cur[inf.KING].file
-            cur[inf.KING].rank = dr
-            cur[inf.KING].file = df
-            assert inf.king_in_check(board_state, cur, opp)
-            cur[inf.KING].rank = sr
-            cur[inf.KING].file = sf
-            return 'KING'
-    except Exception as e:
-        print(e)
-        breakpoint()
+    if try_king_in_check(piece, dr, df, board, board_state, white, black):
+        return 'CHECK'
+    elif piece.name == "P":
+        compare_board_to_board(board, board_state)
+        if (inf.legal_pawn_move(piece, board_state, dr, df, True)
+                or inf.legal_pawn_move(piece, board_state, dr, df, False)):
+            breakpoint()
+        return 'PAWN'
+    elif piece.name == "R":
+        compare_board_to_board(board, board_state)
+        if inf.legal_rook_move(piece, board_state, dr, df):
+            breakpoint()
+        return 'ROOK'
+    elif piece.name == "N":
+        compare_board_to_board(board, board_state)
+        if inf.legal_knight_move(piece, board_state, dr, df):
+            breakpoint()
+        return 'KNIGHT'
+    elif piece.name == "B":
+        compare_board_to_board(board, board_state)
+        if inf.legal_bishop_move(piece, board_state, dr, df):
+            breakpoint()
+        return 'BISHOP'
+    elif piece.name == "Q":
+        compare_board_to_board(board, board_state)
+        if inf.legal_queen_move(piece, board_state, dr, df):
+            breakpoint()
+        return 'QUEEN'
+    elif piece.name == "K":
+        compare_board_to_board(board, board_state)
+        if inf.legal_king_move(piece, board_state, dr, df):
+            breakpoint()
+        return 'KING'
 
 
 def print_board_state(board_state):
@@ -350,13 +363,21 @@ def count_invalid(mvids, opening, tgts):
         if tgt == inf.NOOP:
             nmoves = i
             break
-        uci = mvid_to_uci(mvid, board_state, white, black, False)
-        compare_board_to_board(board, board_state)
-        if is_null(uci):
-            reasons['NULL'] += 1
-        elif not board.is_legal(chess.Move.from_uci(uci)):
-            reason = get_invalid_reason(
-                mvid, board, board_state, white, black)
+        try:
+            uci = mvid_to_uci(mvid, board_state, white, black, False)
+            if not board.is_legal(chess.Move.from_uci(uci)):
+                raise IllegalBoardException
+        except IllegalMoveException as e:
+            if isinstance(e, NullMoveException):
+                reason = 'NULL'
+            elif isinstance(e, CapturedMoveException):
+                reason = 'CAPTURED'
+            elif isinstance(e, IllegalBoardException):
+                reason = get_invalid_reason(
+                    mvid, board, board_state, white, black)
+            else:
+                raise e
+
             reasons[reason] += 1
             nfail += 1
 

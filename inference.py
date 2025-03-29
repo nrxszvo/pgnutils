@@ -276,6 +276,10 @@ def legal_queen_move(piece, board, dr, df):
     )
 
 
+def legal_king_move(piece, board, dr, df):
+    return abs(piece.rank-dr) in [0, 1] and abs(piece.file-df) in [0, 1] and (board[dr][df] is None or board[dr][df].color != piece.color)
+
+
 def legal_move(piece, board, dest, enpassant=False):
     dr = rank_to_int(dest[1])
     df = FILE_TO_INT[dest[0]]
@@ -291,7 +295,7 @@ def legal_move(piece, board, dest, enpassant=False):
     elif piece.name == "Q":
         return legal_queen_move(piece, board, dr, df)
     elif piece.name == "K":
-        return True
+        return legal_king_move(piece, board, dr, df)
 
 
 def attacking(a, b, board):
@@ -307,6 +311,8 @@ def attacking(a, b, board):
         return legal_bishop_move(a, board, dr, df)
     elif a.name == "Q":
         return legal_queen_move(a, board, dr, df)
+    elif a.name == 'K':
+        return legal_king_move(a, board, dr, df)
     return False
 
 
