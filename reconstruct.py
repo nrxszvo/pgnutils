@@ -224,7 +224,7 @@ def try_king_in_check(piece, dr, df, board, board_state, white, black):
     sf = cur[idx].file
 
     if cur[idx] != board_state[sr][sf]:
-        breakpoint()
+        raise Exception
 
     cur[idx].rank = dr
     cur[idx].file = df
@@ -247,8 +247,6 @@ def try_king_in_check(piece, dr, df, board, board_state, white, black):
     cur[idx].rank = sr
     cur[idx].file = sf
 
-    compare_board_to_board(board, board_state)
-
     return result
 
 
@@ -263,42 +261,24 @@ def get_invalid_reason(mvid, board, board_state, white, black):
     else:
         piece = black[pid-16]
 
-    cur = white if pid < 16 else black
-    opp = black if pid < 16 else white
-
-    compare_board_to_board(board, board_state)
     if try_king_in_check(piece, dr, df, board, board_state, white, black):
         return 'CHECK'
     elif piece.name == "P":
-        compare_board_to_board(board, board_state)
-        if (inf.legal_pawn_move(piece, board_state, dr, df, True)
-                or inf.legal_pawn_move(piece, board_state, dr, df, False)):
-            breakpoint()
         return 'PAWN'
     elif piece.name == "R":
-        compare_board_to_board(board, board_state)
-        if inf.legal_rook_move(piece, board_state, dr, df):
-            breakpoint()
+        assert not inf.legal_rook_move(piece, board_state, dr, df)
         return 'ROOK'
     elif piece.name == "N":
-        compare_board_to_board(board, board_state)
-        if inf.legal_knight_move(piece, board_state, dr, df):
-            breakpoint()
+        assert not inf.legal_knight_move(piece, board_state, dr, df)
         return 'KNIGHT'
     elif piece.name == "B":
-        compare_board_to_board(board, board_state)
-        if inf.legal_bishop_move(piece, board_state, dr, df):
-            breakpoint()
+        assert not inf.legal_bishop_move(piece, board_state, dr, df)
         return 'BISHOP'
     elif piece.name == "Q":
-        compare_board_to_board(board, board_state)
-        if inf.legal_queen_move(piece, board_state, dr, df):
-            breakpoint()
+        assert not inf.legal_queen_move(piece, board_state, dr, df)
         return 'QUEEN'
     elif piece.name == "K":
-        compare_board_to_board(board, board_state)
-        if inf.legal_king_move(piece, board_state, dr, df):
-            breakpoint()
+        assert not inf.legal_king_move(piece, board_state, dr, df)
         return 'KING'
 
 
@@ -326,24 +306,19 @@ def compare_board_to_board(board, board_state):
             try:
                 for ii in range(j, j+int(c)):
                     if srow[ii] is not None:
-                        breakpoint()
                         raise Exception('board/board_state mismatch')
                     j += 1
             except ValueError:
                 if srow[j] is None:
-                    breakpoint()
                     raise Exception('board/board_state mismatch')
                 if c == c.lower():
                     if srow[j].color != inf.COLORB:
-                        breakpoint()
                         raise Exception('board/board_state mismatch')
                 else:
                     if srow[j].color != inf.COLORW:
-                        breakpoint()
                         raise Exception('board/board_state mismatch')
 
                 if srow[j].name != c.upper():
-                    breakpoint()
                     raise Exception('board/board_state mismatch')
                 j += 1
 
@@ -363,6 +338,7 @@ def count_invalid(mvids, opening, tgts):
         if tgt == inf.NOOP:
             nmoves = i
             break
+
         try:
             uci = mvid_to_uci(mvid, board_state, white, black, False)
             if not board.is_legal(chess.Move.from_uci(uci)):
