@@ -323,45 +323,49 @@ def compare_board_to_board(board, board_state):
                 j += 1
 
 
-def count_invalid(mvids, opening, tgts):
+def count_invalid(top_n_mvids, opening, tgts):
     board_state, white, black = inf.board_state()
     game = chess.pgn.Game()
     board = game.board()
-    nfail = 0
     reasons = Counter()
     for mvid in opening:
         uci = mvid_to_uci(mvid, board_state, white, black)
         board.push(chess.Move.from_uci(uci))
 
-    nmoves = len(mvids)
-    for i, (mvid, tgt) in enumerate(zip(mvids, tgts)):
+    top_n, nmoves = top_n_mvids.shape
+    nfails = [0]*top_n
+    for i in range(nmoves):
+        tgt = tgts[i]
         if tgt == inf.NOOP:
             nmoves = i
             break
 
-        try:
-            uci = mvid_to_uci(mvid, board_state, white, black, False)
-            if not board.is_legal(chess.Move.from_uci(uci)):
-                raise IllegalBoardException
-        except IllegalMoveException as e:
-            if isinstance(e, NullMoveException):
-                reason = 'NULL'
-            elif isinstance(e, CapturedMoveException):
-                reason = 'CAPTURED'
-            elif isinstance(e, IllegalBoardException):
-                reason = get_invalid_reason(
-                    mvid, board, board_state, white, black)
-            else:
-                raise e
+        for j in range(top_n):
+            mvid = top_n_mvids[j, i]
+            try:
+                uci = mvid_to_uci(mvid, board_state, white, black, False)
+                if not board.is_legal(chess.Move.from_uci(uci)):
+                    raise IllegalBoardException
+                break
+            except IllegalMoveException as e:
+                if isinstance(e, NullMoveException):
+                    reason = 'NULL'
+                elif isinstance(e, CapturedMoveException):
+                    reason = 'CAPTURED'
+                elif isinstance(e, IllegalBoardException):
+                    reason = get_invalid_reason(
+                        mvid, board, board_state, white, black)
+                else:
+                    raise e
 
-            reasons[reason] += 1
-            nfail += 1
+                reasons[reason] += 1
+                nfails[j] += 1
 
         uci = mvid_to_uci(tgt, board_state, white, black)
         board.push(chess.Move.from_uci(uci))
         compare_board_to_board(board, board_state)
 
-    return nmoves, nfail, reasons
+    return nmoves, nfails, reasons
 
 
 def reconstruct(mvids):
