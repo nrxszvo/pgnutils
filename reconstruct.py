@@ -323,14 +323,11 @@ def compare_board_to_board(board, board_state):
                 j += 1
 
 
-def count_invalid(top_n_mvids, opening, tgts):
+def count_invalid(top_n_mvids, tgts):
     board_state, white, black = inf.board_state()
     game = chess.pgn.Game()
     board = game.board()
     reasons = Counter()
-    for mvid in opening:
-        uci = mvid_to_uci(mvid, board_state, white, black)
-        board.push(chess.Move.from_uci(uci))
 
     top_n, nmoves = top_n_mvids.shape
     nfails = [0]*top_n
@@ -348,17 +345,17 @@ def count_invalid(top_n_mvids, opening, tgts):
                     raise IllegalBoardException
                 break
             except IllegalMoveException as e:
-                if isinstance(e, NullMoveException):
-                    reason = 'NULL'
-                elif isinstance(e, CapturedMoveException):
-                    reason = 'CAPTURED'
-                elif isinstance(e, IllegalBoardException):
-                    reason = get_invalid_reason(
-                        mvid, board, board_state, white, black)
-                else:
-                    raise e
+                #if isinstance(e, NullMoveException):
+                #    reason = 'NULL'
+                #elif isinstance(e, CapturedMoveException):
+                #    reason = 'CAPTURED'
+                #elif isinstance(e, IllegalBoardException):
+                #    reason = get_invalid_reason(
+                #        mvid, board, board_state, white, black)
+                #else:
+                #    raise e
 
-                reasons[reason] += 1
+                #reasons[reason] += 1
                 nfails[j] += 1
 
         uci = mvid_to_uci(tgt, board_state, white, black)
