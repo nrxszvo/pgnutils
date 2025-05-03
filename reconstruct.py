@@ -2,8 +2,7 @@ from . import inference as inf
 from . import validate as val
 import chess
 import chess.pgn
-from collections import Counter
-
+from collections import Counter, OrderedDict
 
 def decode_mvid(mvid):
     if mvid == inf.QCASTLEW:
@@ -83,21 +82,23 @@ def update_to_uci(update, board, white, black, update_state=True, promote="q"):
     if is_null(uci):
         raise NullMoveException
 
+    promoted = None
     if promotion(state[pid], dr):
         if update_state:
             state[pid].name = promote.upper()
         uci += promote
+        promoted = promote
 
-    return uci
+    return uci, promoted
 
 
 def mvid_to_uci(mvid, board_state, white, black, update_state=True, promote="q"):
     updates = decode_mvid(mvid)
-    uci = update_to_uci(updates[0], board_state,
+    uci, promoted = update_to_uci(updates[0], board_state,
                         white, black, update_state, promote)
     if len(updates) == 2:
         update_to_uci(updates[1], board_state, white, black, update_state)
-    return uci
+    return uci, promoted
 
 
 def uci_to_castle_id(uci, white, black):
@@ -119,6 +120,7 @@ def uci_to_castle_id(uci, white, black):
 
 def uci_to_mvid(uci, white, black):
     mvid = uci_to_castle_id(uci, white, black)
+    promo = None
     if mvid is None:
         sf = inf.FILE_TO_INT[uci[0]]
         sr = inf.rank_to_int(uci[1])
@@ -129,7 +131,9 @@ def uci_to_mvid(uci, white, black):
                 piece = p
                 break
         mvid = piece.pid * 64 + inf.sqr_to_int(dst)
-    return mvid
+        if len(uci) == 5:
+            promo = uci[4]
+    return mvid, promo
 
 
 class IllegalMoveException(Exception):
@@ -152,12 +156,59 @@ def is_null(uci):
     half = int(len(uci) / 2)
     return uci[:half] == uci[half:]
 
+def test_promotion(board, moveno, promoted):
+
+    def init_state():
+        moves = []
+        while len(board.move_stack) > 0:
+            moves.append(board.pop())
+
+        state, white, black = inf.board_state()
+        while len(board.move_stack) < moveno:
+            mv = moves.pop()
+            mvid, promo = uci_to_mvid(mv.uci(), white, black)
+            mvid_to_uci(mvid, state, white, black, update_state=True, promote=promo)
+            board.push(mv)
+        
+        return moves, state, white, black
+
+    next_prom = promoted
+
+    while True:
+        next_prom = PROMOTION_ORDER[next_prom]
+        if next_prom == promoted:
+            return False, None
+        moves, state, white, black = init_state()
+        bad_mv = moves.pop()
+        uci = bad_mv.uci()[:-1] + next_prom
+        moves.append(chess.Move.from_uci(uci))
+
+        while len(moves) > 0:
+            mv = moves.pop()
+            mvid, promo = uci_to_mvid(mv.uci(), white, black)
+            mvid_to_uci(mvid, state, white, black, update_state=True, promote=promo)
+            if board.is_legal(mv):
+                board.push(mv)
+            else:
+                moves.append(mv)
+                while len(board.move_stack) > moveno+1:
+                    moves.append(board.pop())
+                board.pop()
+                break
+
+        if len(moves) == 0:
+            break
+
+    return True, {'promoted': next_prom, 'board': board, 'state': state, 'white': white, 'black': black}
+
+PROMOTION_ORDER = {'q': 'n', 'n': 'r', 'r': 'b', 'b': 'q'} 
 
 class BoardState:
     def __init__(self):
         self.state, self.white, self.black = inf.board_state()
         self.game = chess.pgn.Game()
         self.board = self.game.board()
+        self.promotions = OrderedDict()
 
     def uci_to_mvid(self, uci):
         return uci_to_mvid(uci, self.white, self.black)
@@ -177,21 +228,33 @@ class BoardState:
             line += "\n"
         return line
 
-    def mvid_to_uci(self, mvid):
-        uci = mvid_to_uci(mvid, self.state, self.white, self.black, False)
+    def mvid_to_uci(self, mvid, update_state=True):
+        uci, _ = mvid_to_uci(mvid, self.state, self.white, self.black, update_state)
         return uci
 
     def update(self, mvid):
-        uci = mvid_to_uci(mvid, self.state, self.white, self.black, False)
+        uci, promoted = mvid_to_uci(mvid, self.state, self.white, self.black, False)
+        if promoted:
+            moveno = len(self.board.move_stack)
+            self.promotions[moveno] = promoted
+
         mv = chess.Move.from_uci(uci)
         if self.board.is_legal(mv):
-            mvid_to_uci(mvid, self.state, self.white, self.black)
+            mvid_to_uci(mvid, self.state, self.white, self.black, update_state=True)
             self.board.push(mv)
+            return mv
         else:
+            for moveno, promoted in reversed(self.promotions.items()):
+                success, result = test_promotion(self.board, moveno, promoted)
+                if success:
+                    self.board = result['board']
+                    self.state = result['state']
+                    self.white = result['white']
+                    self.black = result['black']
+                    return self.update(mvid)
             raise IllegalMoveException(
                 f"illegal move {uci} for board:\n{self.board}"
             )
-        return mv
 
 
 exporter = chess.pgn.StringExporter(
@@ -340,7 +403,7 @@ def count_invalid(top_n_mvids, tgts):
         for j in range(top_n):
             mvid = top_n_mvids[j, i]
             try:
-                uci = mvid_to_uci(mvid, board_state, white, black, False)
+                uci, promo = mvid_to_uci(mvid, board_state, white, black, False)
                 if not board.is_legal(chess.Move.from_uci(uci)):
                     raise IllegalBoardException
                 break
@@ -358,7 +421,7 @@ def count_invalid(top_n_mvids, tgts):
                 #reasons[reason] += 1
                 nfails[j] += 1
 
-        uci = mvid_to_uci(tgt, board_state, white, black)
+        uci, _ = mvid_to_uci(tgt, board_state, white, black)
         board.push(chess.Move.from_uci(uci))
         compare_board_to_board(board, board_state)
 
@@ -375,7 +438,7 @@ def reconstruct(mvids):
     nvalid = len(mvids)
     try:
         for i, mvid in enumerate(mvids):
-            uci = mvid_to_uci(mvid, board, white, black)
+            uci, promo = mvid_to_uci(mvid, board, white, black)
             uci_str.append(uci)
             node = node.add_variation(chess.Move.from_uci(uci))
     except Exception as e:
